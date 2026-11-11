@@ -1,16 +1,299 @@
 diff --git a/app/build.gradle b/app/build.gradle
-index 7690275..4bc0d5a 100644
+index 7690275..b97d3ae 100644
 --- a/app/build.gradle
 +++ b/app/build.gradle
-@@ -9,7 +9,7 @@ android {
+@@ -8,8 +8,8 @@ android {
+         applicationId 'com.winlator'
          minSdkVersion 26
          targetSdkVersion 28
-         versionCode 33
+-        versionCode 33
 -        versionName "11.2"
-+        versionName "0.1-runtime"
++        versionCode 34
++        versionName "0.1.1-touch"
      }
  
      buildTypes {
+diff --git a/app/src/main/java/com/winlator/XServerDisplayActivity.java b/app/src/main/java/com/winlator/XServerDisplayActivity.java
+index 53fb456..254a65a 100644
+--- a/app/src/main/java/com/winlator/XServerDisplayActivity.java
++++ b/app/src/main/java/com/winlator/XServerDisplayActivity.java
+@@ -8,19 +8,24 @@ import android.content.Context;
+ import android.content.Intent;
+ import android.content.SharedPreferences;
+ import android.content.res.Configuration;
++import android.os.Build;
+ import android.os.Bundle;
+ import android.view.KeyEvent;
+ import android.view.Menu;
+ import android.view.MenuItem;
+ import android.view.MotionEvent;
+ import android.view.View;
++import android.view.WindowInsets;
++import android.view.inputmethod.InputMethodManager;
+ import android.widget.ArrayAdapter;
++import android.widget.Button;
+ import android.widget.CheckBox;
+ import android.widget.FrameLayout;
+ import android.widget.Spinner;
+ 
+ import androidx.annotation.NonNull;
+ import androidx.annotation.Nullable;
++import androidx.appcompat.app.AlertDialog;
+ import androidx.appcompat.app.AppCompatActivity;
+ import androidx.core.view.GravityCompat;
+ import androidx.drawerlayout.widget.DrawerLayout;
+@@ -106,6 +111,12 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+     private XServerView xServerView;
+     private InputControlsView inputControlsView;
+     private TouchpadView touchpadView;
++    private View sessionControls;
++    private View sessionHandle;
++    private View sessionPanel;
++    private Button sessionMode;
++    private boolean directTouchPreferred;
++    private boolean directTouchActive;
+     private XEnvironment environment;
+     private DrawerLayout drawerLayout;
+     private Container container;
+@@ -152,7 +163,12 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+         clipboardManager = useAndroidClipboardOnWine ? (ClipboardManager)getSystemService(CLIPBOARD_SERVICE) : null;
+ 
+         drawerLayout = findViewById(R.id.DrawerLayout);
+-        drawerLayout.setOnApplyWindowInsetsListener((view, windowInsets) -> windowInsets.replaceSystemWindowInsets(0, 0, 0, 0));
++        drawerLayout.setOnApplyWindowInsetsListener((view, insets) -> {
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && xServerView != null) {
++                xServerView.getRenderer().setScreenOffsetYRelativeToCursor(insets.isVisible(WindowInsets.Type.ime()));
++            }
++            return insets.replaceSystemWindowInsets(0, 0, 0, 0);
++        });
+         drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
+ 
+         NavigationView navigationView = findViewById(R.id.NavigationView);
+@@ -245,7 +261,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+             @Override
+             public void onMapWindow(Window window) {
+                 if (!flags[0] && window.isRenderable() && !window.getClassName().isEmpty()) {
+-                    xServerView.getRenderer().setCursorVisible(true);
++                    xServerView.getRenderer().setCursorVisible(touchpadView.isEnabled());
+                     preloaderDialog.closeOnUiThread();
+                     flags[0] = true;
+                 }
+@@ -297,8 +313,11 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+     public void onWindowFocusChanged(boolean hasFocus) {
+         super.onWindowFocusChanged(hasFocus);
+ 
++        if (!hasFocus && touchpadView != null) touchpadView.cancelTouchInput();
+         if (hasFocus) {
+-            if (capturePointerOnExternalMouse) touchpadView.requestPointerCapture();
++            if (capturePointerOnExternalMouse && touchpadView != null && !isSessionKeyboardVisible()) {
++                touchpadView.requestPointerCapture();
++            }
+ 
+             if (winHandler != null && clipboardManager != null && clipboardManager.hasPrimaryClip()) {
+                 ClipData primaryClip = clipboardManager.getPrimaryClip();
+@@ -321,6 +340,8 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+ 
+     @Override
+     public void onPause() {
++        if (touchpadView != null) touchpadView.cancelTouchInput();
++        if (xServer != null) xServer.keyboard.cancelImeInput();
+         ForegroundService.onPauseSession(this);
+         super.onPause();
+         if (environment != null && !isInPictureInPictureMode()) {
+@@ -333,10 +354,16 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+         ForegroundService.setPipMode(isInPictureInPictureMode);
++        if (sessionControls != null) {
++            setSessionPanelOpen(false);
++            sessionControls.setVisibility(isInPictureInPictureMode ? View.GONE : View.VISIBLE);
++        }
+     }
+ 
+     @Override
+     protected void onDestroy() {
++        if (touchpadView != null) touchpadView.cancelTouchInput();
++        if (xServer != null) xServer.keyboard.cancelImeInput();
+         winHandler.stop();
+         if (environment != null) environment.stopEnvironmentComponents();
+         ForegroundService.stopSession(this);
+@@ -345,6 +372,10 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+ 
+     @Override
+     public void onBackPressed() {
++        if (sessionPanel != null && sessionPanel.getVisibility() == View.VISIBLE) {
++            setSessionPanelOpen(false);
++            return;
++        }
+         if (environment != null) {
+             if (!drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                 drawerLayout.openDrawer(GravityCompat.START);
+@@ -358,14 +389,15 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+         final GLRenderer renderer = xServerView.getRenderer();
+         switch (item.getItemId()) {
+             case R.id.menu_item_keyboard:
+-                AppUtils.showKeyboard(this);
+                 drawerLayout.closeDrawers();
++                toggleSessionKeyboard();
+                 break;
+             case R.id.menu_item_input_controls:
+                 showInputControlsDialog();
+                 drawerLayout.closeDrawers();
+                 break;
+             case R.id.menu_item_toggle_fullscreen:
++                touchpadView.cancelTouchInput();
+                 renderer.toggleFullscreen();
+                 drawerLayout.closeDrawers();
+                 break;
+@@ -619,8 +651,85 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+             }
+         }
+ 
++        if (!isGenerateWineprefix()) setupSessionControls(rootView);
+         if (MainActivity.DEBUG_MODE) rootView.addView(AppUtils.createDebugMsgTextView(this));
+-        AppUtils.observeSoftKeyboardVisibility(drawerLayout, renderer::setScreenOffsetYRelativeToCursor);
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) drawerLayout.requestApplyInsets();
++        else AppUtils.observeSoftKeyboardVisibility(drawerLayout, renderer::setScreenOffsetYRelativeToCursor);
++    }
++
++    private void setupSessionControls(FrameLayout rootView) {
++        directTouchPreferred = preferences.getBoolean("vex_direct_touch", true);
++        sessionControls = getLayoutInflater().inflate(R.layout.vex_session_controls, rootView, false);
++        sessionHandle = sessionControls.findViewById(R.id.vex_session_handle);
++        sessionPanel = sessionControls.findViewById(R.id.vex_session_panel);
++        sessionMode = sessionControls.findViewById(R.id.vex_session_mode);
++
++        sessionHandle.setOnClickListener(view -> setSessionPanelOpen(sessionPanel.getVisibility() != View.VISIBLE));
++        sessionMode.setOnClickListener(view -> {
++            directTouchPreferred = !directTouchPreferred;
++            preferences.edit().putBoolean("vex_direct_touch", directTouchPreferred).apply();
++            updateTouchMode();
++        });
++        sessionControls.findViewById(R.id.vex_session_keyboard).setOnClickListener(view -> {
++            setSessionPanelOpen(false);
++            toggleSessionKeyboard();
++        });
++        sessionControls.findViewById(R.id.vex_session_fullscreen).setOnClickListener(view -> {
++            setSessionPanelOpen(false);
++            touchpadView.cancelTouchInput();
++            xServerView.getRenderer().toggleFullscreen();
++        });
++        sessionControls.findViewById(R.id.vex_session_menu).setOnClickListener(view -> {
++            setSessionPanelOpen(false);
++            drawerLayout.openDrawer(GravityCompat.START);
++        });
++        sessionControls.findViewById(R.id.vex_session_exit).setOnClickListener(view -> {
++            setSessionPanelOpen(false);
++            new AlertDialog.Builder(this)
++                .setMessage(R.string.vex_confirm_end_session)
++                .setNegativeButton(android.R.string.cancel, null)
++                .setPositiveButton(R.string.vex_end_session, (dialog, which) -> exit())
++                .show();
++        });
++
++        rootView.addView(sessionControls);
++        updateTouchMode();
++    }
++
++    private void setSessionPanelOpen(boolean open) {
++        sessionPanel.setVisibility(open ? View.VISIBLE : View.GONE);
++        sessionHandle.setContentDescription(getString(open ? R.string.vex_close_session_controls : R.string.vex_open_session_controls));
++    }
++
++    private void updateTouchMode() {
++        if (sessionMode == null) return;
++        boolean desktopInput = inputControlsView.getProfile() == null && !xServer.isRelativeMouseMovement();
++        directTouchActive = desktopInput && directTouchPreferred;
++        touchpadView.setDirectTouch(directTouchActive);
++        sessionMode.setEnabled(desktopInput);
++        sessionMode.setText(directTouchActive ? R.string.vex_direct_touch : R.string.vex_cursor_mode);
++    }
++
++    private boolean isSessionKeyboardVisible() {
++        if (touchpadView == null) return false;
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
++            WindowInsets insets = touchpadView.getRootWindowInsets();
++            if (insets != null) return insets.isVisible(WindowInsets.Type.ime());
++        }
++        return xServerView.getRenderer().isScreenOffsetYRelativeToCursor();
++    }
++
++    private void toggleSessionKeyboard() {
++        InputMethodManager keyboard = (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
++        if (keyboard == null) return;
++        if (isSessionKeyboardVisible()) {
++            keyboard.hideSoftInputFromWindow(touchpadView.getWindowToken(), 0);
++            return;
++        }
++        // A game profile may disable touch input. It can still focus this view for the IME.
++        if (touchpadView.hasPointerCapture()) touchpadView.releasePointerCapture();
++        touchpadView.requestFocus();
++        touchpadView.post(() -> keyboard.showSoftInput(touchpadView, InputMethodManager.SHOW_IMPLICIT));
+     }
+ 
+     private void showInputControlsDialog() {
+@@ -678,6 +787,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+     }
+ 
+     private void showInputControls(ControlsProfile profile) {
++        touchpadView.cancelTouchInput();
+         inputControlsView.setVisibility(View.VISIBLE);
+         inputControlsView.requestFocus();
+         inputControlsView.setProfile(profile);
+@@ -696,6 +806,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+         }
+ 
+         inputControlsView.invalidate();
++        updateTouchMode();
+     }
+ 
+     private void hideInputControls() {
+@@ -713,6 +824,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+         }
+ 
+         inputControlsView.invalidate();
++        updateTouchMode();
+     }
+ 
+     private void extractGraphicsDriverFiles() {
+@@ -779,6 +891,15 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+     }
+ 
+     private void showTouchpadHelpDialog() {
++        if (directTouchActive) {
++            drawerLayout.closeDrawers();
++            new AlertDialog.Builder(this)
++                .setTitle(R.string.touchpad_help)
++                .setMessage(R.string.vex_direct_touch_help)
++                .setPositiveButton(android.R.string.ok, null)
++                .show();
++            return;
++        }
+         ContentDialog dialog = new ContentDialog(this, R.layout.touchpad_help_dialog);
+         dialog.setTitle(R.string.touchpad_help);
+         dialog.setIcon(R.drawable.icon_help);
+@@ -788,13 +909,18 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+ 
+     @Override
+     public boolean dispatchGenericMotionEvent(MotionEvent event) {
+-        return !winHandler.onGenericMotionEvent(event) && !touchpadView.onExternalMouseEvent(event) && super.dispatchGenericMotionEvent(event);
++        if (touchpadView == null) return super.dispatchGenericMotionEvent(event);
++        return winHandler.onGenericMotionEvent(event) || touchpadView.onExternalMouseEvent(event)
++            || super.dispatchGenericMotionEvent(event);
+     }
+ 
+     @Override
+     public boolean dispatchKeyEvent(KeyEvent event) {
+-        return (!inputControlsView.onKeyEvent(event) && !winHandler.onKeyEvent(event) && xServer.keyboard.onKeyEvent(event)) ||
+-               (!ExternalController.isGameController(event.getDevice()) && super.dispatchKeyEvent(event));
++        if (inputControlsView == null) return super.dispatchKeyEvent(event);
++        if (inputControlsView.onKeyEvent(event) || winHandler.onKeyEvent(event) || xServer.keyboard.onKeyEvent(event)) {
++            return true;
++        }
++        return !ExternalController.isGameController(event.getDevice()) && super.dispatchKeyEvent(event);
+     }
+ 
+     public InputControlsView getInputControlsView() {
 diff --git a/app/src/main/java/com/winlator/contentdialog/AboutDialog.java b/app/src/main/java/com/winlator/contentdialog/AboutDialog.java
 index 84f2567..4068199 100644
 --- a/app/src/main/java/com/winlator/contentdialog/AboutDialog.java
@@ -25,6 +308,517 @@ index 84f2567..4068199 100644
              tvWebpage.setMovementMethod(LinkMovementMethod.getInstance());
  
              ((TextView)findViewById(R.id.TVAppVersion)).setText(context.getString(R.string.version)+" "+pInfo.versionName);
+diff --git a/app/src/main/java/com/winlator/renderer/GLRenderer.java b/app/src/main/java/com/winlator/renderer/GLRenderer.java
+index 48a8344..61e5d34 100644
+--- a/app/src/main/java/com/winlator/renderer/GLRenderer.java
++++ b/app/src/main/java/com/winlator/renderer/GLRenderer.java
+@@ -51,14 +51,15 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
+     private final Drawable rootCursorDrawable;
+     private final ArrayList<RenderableWindow> renderableWindows = new ArrayList<>();
+     private boolean forceWindowsFullscreen;
+-    private boolean fullscreen = false;
+-    private boolean toggleFullscreen = false;
++    private volatile boolean fullscreen = false;
++    private volatile float[] sceneToDesktop = {0, 0, 1};
++    private volatile float keyboardAnchorY;
+     protected boolean viewportNeedsUpdate = true;
+     private boolean cursorVisible = true;
+     private float cursorScale = 1.0f;
+     private int cursorBackColor = 0xffffff;
+     private int cursorForeColor = 0x000000;
+-    private boolean screenOffsetYRelativeToCursor = false;
++    private volatile boolean screenOffsetYRelativeToCursor = false;
+     private float magnifierZoom = 1.0f;
+     protected short surfaceWidth;
+     protected short surfaceHeight;
+@@ -107,12 +108,6 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
+ 
+     @Override
+     public void onDrawFrame(GL10 gl) {
+-        if (toggleFullscreen) {
+-            fullscreen = !fullscreen;
+-            toggleFullscreen = false;
+-            viewportNeedsUpdate = true;
+-        }
+-
+         if (effectComposer.hasEffects()) {
+             effectComposer.render();
+         }
+@@ -139,11 +134,16 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
+         }
+ 
+         if (screenOffsetYRelativeToCursor || magnifierZoom != 1.0f) {
+-            float scaleY = magnifierZoom != 1.0f ? Math.abs(1.0f - magnifierZoom) : 0.5f;
++            float scaleY = magnifierZoom != 1.0f ? Math.abs(1.0f - magnifierZoom) : 0.75f;
+             float offsetY = xServer.screenInfo.height * (screenOffsetYRelativeToCursor ? 0.25f : 0.5f);
+-            pointerY = Mathf.clamp(xServer.pointer.getY() * magnifierZoom - offsetY, 0, xServer.screenInfo.height * scaleY);
++            float anchorY = screenOffsetYRelativeToCursor ? keyboardAnchorY : xServer.pointer.getY();
++            pointerY = Mathf.clamp(anchorY * magnifierZoom - offsetY, 0, xServer.screenInfo.height * scaleY);
+         }
+ 
++        float[] transform = sceneToDesktop;
++        if (transform[0] != pointerX || transform[1] != pointerY || transform[2] != magnifierZoom) {
++            sceneToDesktop = new float[]{pointerX, pointerY, magnifierZoom};
++        }
+         XForm.makeTransform(tmpXForm2, -pointerX, -pointerY, magnifierZoom, magnifierZoom, 0);
+ 
+         renderWindows();
+@@ -272,7 +272,10 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
+     }
+ 
+     public void toggleFullscreen() {
+-        toggleFullscreen = true;
++        xServerView.queueEvent(() -> {
++            fullscreen = !fullscreen;
++            viewportNeedsUpdate = true;
++        });
+         xServerView.requestRender();
+     }
+ 
+@@ -381,10 +384,18 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
+     }
+ 
+     public void setScreenOffsetYRelativeToCursor(boolean screenOffsetYRelativeToCursor) {
++        if (this.screenOffsetYRelativeToCursor == screenOffsetYRelativeToCursor) return;
++        if (screenOffsetYRelativeToCursor) keyboardAnchorY = xServer.pointer.getY();
+         this.screenOffsetYRelativeToCursor = screenOffsetYRelativeToCursor;
+         xServerView.requestRender();
+     }
+ 
++    public void mapSceneToDesktop(float[] point) {
++        float[] transform = sceneToDesktop;
++        point[0] = (point[0] + transform[0]) / transform[2];
++        point[1] = (point[1] + transform[1]) / transform[2];
++    }
++
+     public boolean isForceWindowsFullscreen() {
+         return forceWindowsFullscreen;
+     }
+diff --git a/app/src/main/java/com/winlator/widget/DirectTouchInput.java b/app/src/main/java/com/winlator/widget/DirectTouchInput.java
+new file mode 100644
+index 0000000..ebe47f1
+--- /dev/null
++++ b/app/src/main/java/com/winlator/widget/DirectTouchInput.java
+@@ -0,0 +1,156 @@
++package com.winlator.widget;
++
++import android.view.MotionEvent;
++import android.view.ViewConfiguration;
++
++import com.winlator.xserver.Pointer;
++import com.winlator.xserver.XServer;
++
++final class DirectTouchInput {
++    private enum Gesture { IDLE, TAP, DRAG, SCROLL, CONSUMED }
++
++    private final TouchpadView view;
++    private final XServer server;
++    private final int touchSlop;
++    private final float scrollStep;
++    private final float[] desktopPoint = new float[2];
++    private final Runnable longPress = this::rightClick;
++    private Gesture gesture = Gesture.IDLE;
++    private int primaryId;
++    private int secondId;
++    private float startX;
++    private float startY;
++    private float lastScrollY;
++    private float scrollRemainder;
++    private boolean leftDown;
++
++    DirectTouchInput(TouchpadView view, XServer server) {
++        this.view = view;
++        this.server = server;
++        touchSlop = ViewConfiguration.get(view.getContext()).getScaledTouchSlop();
++        scrollStep = 32 * view.getResources().getDisplayMetrics().density;
++    }
++
++    void onTouch(MotionEvent event) {
++        int index = event.getActionIndex();
++        switch (event.getActionMasked()) {
++            case MotionEvent.ACTION_DOWN:
++                cancel();
++                primaryId = event.getPointerId(index);
++                startX = event.getX(index);
++                startY = event.getY(index);
++                if (!view.mapDirectPoint(startX, startY, desktopPoint)) {
++                    gesture = Gesture.CONSUMED;
++                    break;
++                }
++                gesture = Gesture.TAP;
++                movePointer();
++                view.postDelayed(longPress, ViewConfiguration.getLongPressTimeout());
++                break;
++            case MotionEvent.ACTION_POINTER_DOWN:
++                view.removeCallbacks(longPress);
++                if (gesture == Gesture.TAP || gesture == Gesture.DRAG) {
++                    releaseLeft();
++                    int primary = event.findPointerIndex(primaryId);
++                    if (primary >= 0 && event.getPointerCount() == 2) {
++                        secondId = event.getPointerId(index);
++                        lastScrollY = (event.getY(primary) + event.getY(index)) * 0.5f;
++                        scrollRemainder = 0;
++                        gesture = Gesture.SCROLL;
++                        break;
++                    }
++                }
++                gesture = Gesture.CONSUMED;
++                break;
++            case MotionEvent.ACTION_MOVE:
++                move(event);
++                break;
++            case MotionEvent.ACTION_POINTER_UP:
++                view.removeCallbacks(longPress);
++                releaseLeft();
++                gesture = Gesture.CONSUMED;
++                break;
++            case MotionEvent.ACTION_UP:
++                if (gesture == Gesture.TAP || gesture == Gesture.DRAG) {
++                    move(event);
++                    if (gesture == Gesture.TAP && view.mapDirectPoint(event.getX(index), event.getY(index), desktopPoint)) {
++                        movePointer();
++                        if (view.isPointerButtonLeftEnabled()) click(Pointer.Button.BUTTON_LEFT);
++                    }
++                }
++                cancel();
++                break;
++            case MotionEvent.ACTION_CANCEL:
++                cancel();
++                break;
++        }
++    }
++
++    private void move(MotionEvent event) {
++        int primary = event.findPointerIndex(primaryId);
++        if (primary < 0) return;
++        if (gesture == Gesture.SCROLL) {
++            int second = event.findPointerIndex(secondId);
++            if (second < 0) return;
++            float centerY = (event.getY(primary) + event.getY(second)) * 0.5f;
++            scrollRemainder += centerY - lastScrollY;
++            lastScrollY = centerY;
++            while (Math.abs(scrollRemainder) >= scrollStep) {
++                boolean scrollUp = scrollRemainder > 0;
++                click(scrollUp ? Pointer.Button.BUTTON_SCROLL_UP : Pointer.Button.BUTTON_SCROLL_DOWN);
++                scrollRemainder += scrollUp ? -scrollStep : scrollStep;
++            }
++            return;
++        }
++
++        float x = event.getX(primary);
++        float y = event.getY(primary);
++        if (gesture == Gesture.TAP && Math.hypot(x - startX, y - startY) > touchSlop) {
++            view.removeCallbacks(longPress);
++            gesture = Gesture.DRAG;
++            if (view.isPointerButtonLeftEnabled() && !server.pointer.isButtonPressed(Pointer.Button.BUTTON_LEFT)) {
++                view.mapDirectPoint(startX, startY, desktopPoint);
++                movePointer();
++                server.injectPointerButtonPress(Pointer.Button.BUTTON_LEFT);
++                leftDown = true;
++            }
++        }
++        if (gesture == Gesture.DRAG) {
++            view.mapDirectPoint(x, y, desktopPoint);
++            movePointer();
++        }
++    }
++
++    private void rightClick() {
++        if (gesture != Gesture.TAP || !view.isEnabled() || !view.isPointerButtonRightEnabled()) return;
++        if (view.mapDirectPoint(startX, startY, desktopPoint)) {
++            movePointer();
++            click(Pointer.Button.BUTTON_RIGHT);
++        }
++        gesture = Gesture.CONSUMED;
++    }
++
++    private void click(Pointer.Button button) {
++        if (!server.pointer.isButtonPressed(button)) {
++            server.injectPointerButtonPress(button);
++            server.injectPointerButtonRelease(button);
++        }
++    }
++
++    private void movePointer() {
++        server.injectPointerMove((int)desktopPoint[0], (int)desktopPoint[1]);
++    }
++
++    private void releaseLeft() {
++        if (leftDown) {
++            server.injectPointerButtonRelease(Pointer.Button.BUTTON_LEFT);
++            leftDown = false;
++        }
++    }
++
++    void cancel() {
++        view.removeCallbacks(longPress);
++        releaseLeft();
++        gesture = Gesture.IDLE;
++    }
++}
+diff --git a/app/src/main/java/com/winlator/widget/TouchpadView.java b/app/src/main/java/com/winlator/widget/TouchpadView.java
+index 5d04f4d..dd883c2 100644
+--- a/app/src/main/java/com/winlator/widget/TouchpadView.java
++++ b/app/src/main/java/com/winlator/widget/TouchpadView.java
+@@ -4,15 +4,23 @@ import android.content.Context;
+ import android.graphics.Color;
+ import android.graphics.drawable.ColorDrawable;
+ import android.graphics.drawable.StateListDrawable;
++import android.text.Editable;
++import android.text.InputType;
++import android.text.Selection;
+ import android.view.InputDevice;
++import android.view.KeyEvent;
+ import android.view.MotionEvent;
+ import android.view.View;
+ import android.view.ViewGroup;
++import android.view.inputmethod.BaseInputConnection;
++import android.view.inputmethod.EditorInfo;
++import android.view.inputmethod.InputConnection;
+ import android.widget.FrameLayout;
+ 
+ import com.winlator.core.AppUtils;
+ import com.winlator.math.Mathf;
+ import com.winlator.math.XForm;
++import com.winlator.renderer.GLRenderer;
+ import com.winlator.renderer.ViewTransformation;
+ import com.winlator.winhandler.MouseEventFlags;
+ import com.winlator.winhandler.WinHandler;
+@@ -40,15 +48,20 @@ public class TouchpadView extends View implements View.OnCapturedPointerListener
+     private final XServer xServer;
+     private Runnable fourFingersTapCallback;
+     private final float[] xform = XForm.getInstance();
++    private final ViewTransformation viewport = new ViewTransformation();
++    private final DirectTouchInput directTouchInput;
++    private boolean directTouch;
++    private boolean fullscreenTransform;
+ 
+     public TouchpadView(Context context, XServer xServer, boolean capturePointerOnExternalMouse) {
+         super(context);
+         this.xServer = xServer;
++        directTouchInput = new DirectTouchInput(this, xServer);
+         setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+         setBackground(createTransparentBackground());
+         setClickable(true);
+         setFocusable(true);
+-        setFocusableInTouchMode(false);
++        setFocusableInTouchMode(true);
+         updateXform(AppUtils.getScreenWidth(), AppUtils.getScreenHeight(), xServer.screenInfo.width, xServer.screenInfo.height);
+ 
+         if (capturePointerOnExternalMouse) {
+@@ -74,15 +87,56 @@ public class TouchpadView extends View implements View.OnCapturedPointerListener
+     }
+ 
+     private void updateXform(int outerWidth, int outerHeight, int innerWidth, int innerHeight) {
+-        ViewTransformation viewTransformation = new ViewTransformation();
+-        viewTransformation.update(outerWidth, outerHeight, innerWidth, innerHeight);
++        if (outerWidth <= 0 || outerHeight <= 0) return;
++        viewport.update(outerWidth, outerHeight, innerWidth, innerHeight);
++        fullscreenTransform = xServer.getRenderer().isFullscreen();
++        if (fullscreenTransform) {
++            XForm.makeScale(xform, (float)innerWidth / outerWidth, (float)innerHeight / outerHeight);
++        }
++        else {
++            XForm.makeTranslation(xform, -viewport.viewOffsetX, -viewport.viewOffsetY);
++            XForm.scale(xform, (float)innerWidth / viewport.viewWidth, (float)innerHeight / viewport.viewHeight);
++        }
++    }
+ 
+-        float invAspect = 1.0f / viewTransformation.aspect;
+-        if (!xServer.getRenderer().isFullscreen()) {
+-            XForm.makeTranslation(xform, -viewTransformation.viewOffsetX, -viewTransformation.viewOffsetY);
+-            XForm.scale(xform, invAspect, invAspect);
++    private void refreshFullscreenTransform() {
++        if (fullscreenTransform != xServer.getRenderer().isFullscreen()) {
++            updateXform(getWidth(), getHeight(), xServer.screenInfo.width, xServer.screenInfo.height);
+         }
+-        else XForm.makeScale(xform, invAspect, invAspect);
++    }
++
++    boolean mapDirectPoint(float x, float y, float[] result) {
++        refreshFullscreenTransform();
++        XForm.transformPoint(xform, x, y, result);
++        int width = xServer.screenInfo.width;
++        int height = xServer.screenInfo.height;
++        boolean inside = result[0] >= 0 && result[0] < width && result[1] >= 0 && result[1] < height;
++        GLRenderer renderer = xServer.getRenderer();
++        renderer.mapSceneToDesktop(result);
++        result[0] = Mathf.clamp(result[0], 0, width - 1);
++        result[1] = Mathf.clamp(result[1], 0, height - 1);
++        return inside;
++    }
++
++    public void setDirectTouch(boolean directTouch) {
++        if (this.directTouch != directTouch) cancelTouchInput();
++        this.directTouch = directTouch;
++    }
++
++    public void cancelTouchInput() {
++        directTouchInput.cancel();
++        releasePointerButtonLeft(fingerPointerButtonLeft);
++        releasePointerButtonRight(fingerPointerButtonRight);
++        for (int i = 0; i < MAX_FINGERS; i++) fingers[i] = null;
++        numFingers = 0;
++        scrolling = false;
++        scrollAccumY = 0;
++    }
++
++    @Override
++    protected void onDetachedFromWindow() {
++        cancelTouchInput();
++        super.onDetachedFromWindow();
+     }
+ 
+     private class Finger {
+@@ -136,6 +190,12 @@ public class TouchpadView extends View implements View.OnCapturedPointerListener
+ 
+     @Override
+     public boolean onTouchEvent(MotionEvent event) {
++        if (!isEnabled()) return false;
++        refreshFullscreenTransform();
++        if (directTouch && !event.isFromSource(InputDevice.SOURCE_MOUSE)) {
++            directTouchInput.onTouch(event);
++            return true;
++        }
+         int actionIndex = event.getActionIndex();
+         int pointerId = event.getPointerId(actionIndex);
+         int actionMasked = event.getActionMasked();
+@@ -182,8 +242,7 @@ public class TouchpadView extends View implements View.OnCapturedPointerListener
+                 }
+                 break;
+             case MotionEvent.ACTION_CANCEL:
+-                for (byte i = 0; i < MAX_FINGERS; i++) fingers[i] = null;
+-                numFingers = 0;
++                cancelTouchInput();
+                 break;
+         }
+ 
+@@ -303,21 +362,17 @@ public class TouchpadView extends View implements View.OnCapturedPointerListener
+         }
+     }
+ 
+-    private void releasePointerButtonLeft(final Finger finger) {
+-        if (isEnabled() && pointerButtonLeftEnabled && finger == fingerPointerButtonLeft && xServer.pointer.isButtonPressed(Pointer.Button.BUTTON_LEFT)) {
+-            postDelayed(() -> {
+-                xServer.injectPointerButtonRelease(Pointer.Button.BUTTON_LEFT);
+-                fingerPointerButtonLeft = null;
+-            }, 30);
++    private void releasePointerButtonLeft(Finger finger) {
++        if (finger != null && finger == fingerPointerButtonLeft) {
++            xServer.injectPointerButtonRelease(Pointer.Button.BUTTON_LEFT);
++            fingerPointerButtonLeft = null;
+         }
+     }
+ 
+-    private void releasePointerButtonRight(final Finger finger) {
+-        if (isEnabled() && pointerButtonRightEnabled && finger == fingerPointerButtonRight && xServer.pointer.isButtonPressed(Pointer.Button.BUTTON_RIGHT)) {
+-            postDelayed(() -> {
+-                xServer.injectPointerButtonRelease(Pointer.Button.BUTTON_RIGHT);
+-                fingerPointerButtonRight = null;
+-            }, 30);
++    private void releasePointerButtonRight(Finger finger) {
++        if (finger != null && finger == fingerPointerButtonRight) {
++            xServer.injectPointerButtonRelease(Pointer.Button.BUTTON_RIGHT);
++            fingerPointerButtonRight = null;
+         }
+     }
+ 
+@@ -356,6 +411,7 @@ public class TouchpadView extends View implements View.OnCapturedPointerListener
+     public boolean onExternalMouseEvent(MotionEvent event) {
+         boolean handled = false;
+         if (isEnabled() && event.isFromSource(InputDevice.SOURCE_MOUSE)) {
++            refreshFullscreenTransform();
+             int actionButton = event.getActionButton();
+             switch (event.getAction()) {
+                 case MotionEvent.ACTION_BUTTON_PRESS:
+@@ -400,6 +456,7 @@ public class TouchpadView extends View implements View.OnCapturedPointerListener
+ 
+     public float[] computeDeltaPoint(float lastX, float lastY, float x, float y) {
+         final float[] result = {0, 0};
++        refreshFullscreenTransform();
+ 
+         XForm.transformPoint(xform, lastX, lastY, result);
+         lastX = result[0];
+@@ -414,6 +471,79 @@ public class TouchpadView extends View implements View.OnCapturedPointerListener
+         return result;
+     }
+ 
++    @Override
++    public boolean onCheckIsTextEditor() {
++        return true;
++    }
++
++    @Override
++    public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
++        outAttrs.inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
++            | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
++        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN;
++        outAttrs.initialSelStart = 0;
++        outAttrs.initialSelEnd = 0;
++
++        return new BaseInputConnection(this, true) {
++            @Override
++            public boolean commitText(CharSequence text, int newCursorPosition) {
++                getEditable().clear();
++                super.finishComposingText();
++                xServer.keyboard.typeText(text);
++                return true;
++            }
++
++            @Override
++            public boolean finishComposingText() {
++                String text = getEditable().toString();
++                getEditable().clear();
++                super.finishComposingText();
++                xServer.keyboard.typeText(text);
++                return true;
++            }
++
++            @Override
++            public boolean deleteSurroundingText(int beforeLength, int afterLength) {
++                Editable text = getEditable();
++                if (text.length() > 0) {
++                    int start = Math.max(0, Selection.getSelectionStart(text));
++                    int end = Math.max(start, Selection.getSelectionEnd(text));
++                    text.delete(Math.max(0, start - beforeLength), Math.min(text.length(), end + afterLength));
++                    return true;
++                }
++                xServer.keyboard.deleteText(beforeLength, afterLength);
++                return true;
++            }
++
++            @Override
++            public boolean deleteSurroundingTextInCodePoints(int beforeLength, int afterLength) {
++                Editable text = getEditable();
++                if (text.length() > 0) {
++                    int start = Math.max(0, Selection.getSelectionStart(text));
++                    int end = Math.max(start, Selection.getSelectionEnd(text));
++                    int before = Math.min(beforeLength, Character.codePointCount(text, 0, start));
++                    int after = Math.min(afterLength, Character.codePointCount(text, end, text.length()));
++                    text.delete(Character.offsetByCodePoints(text, start, -before), Character.offsetByCodePoints(text, end, after));
++                    return true;
++                }
++                xServer.keyboard.deleteText(beforeLength, afterLength);
++                return true;
++            }
++
++            @Override
++            public boolean sendKeyEvent(KeyEvent event) {
++                if (event.getKeyCode() == KeyEvent.KEYCODE_DEL || event.getKeyCode() == KeyEvent.KEYCODE_FORWARD_DEL) {
++                    if (event.getAction() == KeyEvent.ACTION_DOWN) {
++                        boolean backspace = event.getKeyCode() == KeyEvent.KEYCODE_DEL;
++                        deleteSurroundingTextInCodePoints(backspace ? 1 : 0, backspace ? 0 : 1);
++                    }
++                    return true;
++                }
++                return xServer.keyboard.onKeyEvent(event);
++            }
++        };
++    }
++
+     @Override
+     public boolean onCapturedPointer(View view, MotionEvent event) {
+         if (event.getAction() == MotionEvent.ACTION_MOVE) {
 diff --git a/app/src/main/java/com/winlator/xenvironment/RootFS.java b/app/src/main/java/com/winlator/xenvironment/RootFS.java
 index a1aeba7..8915bc6 100644
 --- a/app/src/main/java/com/winlator/xenvironment/RootFS.java
@@ -140,6 +934,202 @@ index 08fbf80..37d619a 100644
          });
      }
  
+diff --git a/app/src/main/java/com/winlator/xserver/Keyboard.java b/app/src/main/java/com/winlator/xserver/Keyboard.java
+index 3039610..8cdb8be 100644
+--- a/app/src/main/java/com/winlator/xserver/Keyboard.java
++++ b/app/src/main/java/com/winlator/xserver/Keyboard.java
+@@ -1,13 +1,15 @@
+ package com.winlator.xserver;
+ 
++import android.os.Handler;
++import android.os.Looper;
+ import android.view.KeyEvent;
+ 
+ import androidx.collection.ArraySet;
+ 
+-import com.winlator.core.AppUtils;
+ import com.winlator.core.Bitmask;
+ import com.winlator.inputcontrols.ExternalController;
+ 
++import java.util.ArrayDeque;
+ import java.util.ArrayList;
+ 
+ public class Keyboard {
+@@ -21,6 +23,14 @@ public class Keyboard {
+     private final ArraySet<Byte> pressedKeys = new ArraySet<>();
+     private final ArrayList<OnKeyboardListener> onKeyboardListeners = new ArrayList<>();
+     private final XServer xServer;
++    private final Handler imeHandler = new Handler(Looper.getMainLooper());
++    private final ArrayDeque<Integer> imeKeys = new ArrayDeque<>();
++    private static final int IME_BACKSPACE = -1;
++    private static final int IME_DELETE = -2;
++    private static final long IME_KEY_INTERVAL_MS = 30;
++    private final Runnable nextImeKey = this::sendNextImeKey;
++    private XKeycode imeKeyDown;
++    private int nextCustomKey;
+ 
+     public interface OnKeyboardListener {
+         void onKeyPress(byte keycode, int keysym);
+@@ -117,29 +127,68 @@ public class Keyboard {
+         }
+         else if (action == KeyEvent.ACTION_MULTIPLE) {
+             String chars = event.getCharacters();
+-            if (chars != null && chars.length() == 1) {
+-                int keysym = chars.charAt(0);
+-                XKeycode xKeycode = getCustomXKeycodeForKeysym(keysym);
+-                xServer.injectKeyPress(xKeycode, keysym);
+-                AppUtils.runDelayed(() -> xServer.injectKeyRelease(xKeycode), 30);
+-            }
++            if (chars == null) return false;
++            typeText(chars);
+         }
++        else return false;
+         return true;
+     }
+ 
++    public void typeText(CharSequence text) {
++        text.toString().codePoints().limit(4096).filter(codePoint -> codePoint != '\r')
++            .forEach(imeKeys::add);
++        startImeQueue();
++    }
++
++    public void deleteText(int beforeLength, int afterLength) {
++        for (int i = 0; i < Math.min(beforeLength, 256); i++) imeKeys.add(IME_BACKSPACE);
++        for (int i = 0; i < Math.min(afterLength, 256); i++) imeKeys.add(IME_DELETE);
++        startImeQueue();
++    }
++
++    private void startImeQueue() {
++        if (imeKeyDown == null && !imeKeys.isEmpty()) sendNextImeKey();
++    }
++
++    public void cancelImeInput() {
++        imeHandler.removeCallbacks(nextImeKey);
++        imeKeys.clear();
++        releaseImeKey();
++    }
++
++    private void releaseImeKey() {
++        if (imeKeyDown != null) {
++            xServer.injectKeyRelease(imeKeyDown);
++            imeKeyDown = null;
++        }
++    }
++
++    private void sendNextImeKey() {
++        releaseImeKey();
++        Integer codePoint = imeKeys.poll();
++        if (codePoint == null) return;
++
++        int keysym = 0;
++        switch (codePoint) {
++            case IME_BACKSPACE: imeKeyDown = XKeycode.KEY_BKSP; break;
++            case IME_DELETE: imeKeyDown = XKeycode.KEY_DEL; break;
++            case '\n': imeKeyDown = XKeycode.KEY_ENTER; break;
++            case '\t': imeKeyDown = XKeycode.KEY_TAB; break;
++            case ' ': imeKeyDown = XKeycode.KEY_SPACE; break;
++            default:
++                keysym = codePoint <= 0xff ? codePoint : 0x01000000 | codePoint;
++                imeKeyDown = getCustomXKeycodeForKeysym(keysym);
++        }
++        xServer.injectKeyPress(imeKeyDown, keysym);
++        imeHandler.postDelayed(nextImeKey, IME_KEY_INTERVAL_MS);
++    }
++
+     private XKeycode getCustomXKeycodeForKeysym(int keysym) {
+         XKeycode[] customKeys = XKeycode.getCustomKeys();
+         for (XKeycode xKeycode : customKeys) if (hasKeysym(xKeycode.id, keysym)) return xKeycode;
+-        for (XKeycode xKeycode : customKeys) {
+-            int index = xKeycode.id - MIN_KEYCODE;
+-            if (keysyms[index*KEYSYMS_PER_KEYCODE+0] == 0) return xKeycode;
+-        }
+-        for (XKeycode xKeycode : customKeys) {
+-            int index = xKeycode.id - MIN_KEYCODE;
+-            keysyms[index*KEYSYMS_PER_KEYCODE+0] = 0;
+-            keysyms[index*KEYSYMS_PER_KEYCODE+1] = 0;
+-        }
+-        return XKeycode.KEY_CUSTOM_1;
++        XKeycode key = customKeys[nextCustomKey];
++        nextCustomKey = (nextCustomKey + 1) % customKeys.length;
++        return key;
+     }
+ 
+     private static XKeycode[] createKeycodeMap() {
+diff --git a/app/src/main/res/drawable/vex_session_surface.xml b/app/src/main/res/drawable/vex_session_surface.xml
+new file mode 100644
+index 0000000..d6e6d4d
+--- /dev/null
++++ b/app/src/main/res/drawable/vex_session_surface.xml
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android">
++    <solid android:color="#F5221B32" />
++    <stroke android:width="1dp" android:color="#A389D4" />
++    <corners android:radius="16dp" />
++</shape>
+diff --git a/app/src/main/res/layout/vex_session_controls.xml b/app/src/main/res/layout/vex_session_controls.xml
+new file mode 100644
+index 0000000..18c4cbf
+--- /dev/null
++++ b/app/src/main/res/layout/vex_session_controls.xml
+@@ -0,0 +1,57 @@
++<?xml version="1.0" encoding="utf-8"?>
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@+id/vex_session_controls"
++    android:layout_width="wrap_content"
++    android:layout_height="wrap_content"
++    android:layout_gravity="top|end"
++    android:layout_marginTop="8dp"
++    android:layout_marginEnd="8dp"
++    android:gravity="end"
++    android:orientation="vertical">
++
++    <ImageButton
++        android:id="@+id/vex_session_handle"
++        android:layout_width="48dp"
++        android:layout_height="48dp"
++        android:background="@drawable/vex_session_surface"
++        android:contentDescription="@string/vex_open_session_controls"
++        android:padding="13dp"
++        android:src="@drawable/icon_action_bar_menu"
++        android:tint="#ECE1FF" />
++
++    <LinearLayout
++        android:id="@+id/vex_session_panel"
++        android:layout_width="208dp"
++        android:layout_height="wrap_content"
++        android:layout_marginTop="6dp"
++        android:background="@drawable/vex_session_surface"
++        android:orientation="vertical"
++        android:padding="5dp"
++        android:visibility="gone">
++
++        <Button
++            android:id="@+id/vex_session_mode"
++            style="@style/VexSessionButton"
++            android:text="@string/vex_direct_touch" />
++
++        <Button
++            android:id="@+id/vex_session_keyboard"
++            style="@style/VexSessionButton"
++            android:text="@string/keyboard" />
++
++        <Button
++            android:id="@+id/vex_session_fullscreen"
++            style="@style/VexSessionButton"
++            android:text="@string/vex_fullscreen" />
++
++        <Button
++            android:id="@+id/vex_session_menu"
++            style="@style/VexSessionButton"
++            android:text="@string/vex_session_menu" />
++
++        <Button
++            android:id="@+id/vex_session_exit"
++            style="@style/VexSessionButton"
++            android:text="@string/vex_end_session" />
++    </LinearLayout>
++</LinearLayout>
 diff --git a/app/src/main/res/values-pt/strings.xml b/app/src/main/res/values-pt/strings.xml
 index e2d342c..be730c4 100644
 --- a/app/src/main/res/values-pt/strings.xml
@@ -164,6 +1154,25 @@ index 3475814..1a85629 100644
      <string name="run">Запустить</string>
      <string name="edit">Редактировать</string>
      <string name="remove">Удалить</string>
+diff --git a/app/src/main/res/values-tr/vex_session.xml b/app/src/main/res/values-tr/vex_session.xml
+new file mode 100644
+index 0000000..f0b9019
+--- /dev/null
++++ b/app/src/main/res/values-tr/vex_session.xml
+@@ -0,0 +1,13 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="keyboard">Klavye</string>
++    <string name="vex_open_session_controls">Oturum kontrollerini aç</string>
++    <string name="vex_close_session_controls">Oturum kontrollerini kapat</string>
++    <string name="vex_direct_touch">Mod · Doğrudan dokunma</string>
++    <string name="vex_cursor_mode">Mod · İmleç</string>
++    <string name="vex_fullscreen">Tam ekran / Sığdır</string>
++    <string name="vex_session_menu">Diğer kontroller</string>
++    <string name="vex_end_session">Oturumu kapat</string>
++    <string name="vex_confirm_end_session">Windows oturumu kapatılsın mı?</string>
++    <string name="vex_direct_touch_help">Tıklamak için dokun, açmak için çift dokun, sağ tık için basılı tut. Tek parmakla sürükle, iki parmakla kaydır.</string>
++</resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
 index 61fcd5e..a7c3eab 100644
 --- a/app/src/main/res/values/strings.xml
@@ -176,6 +1185,34 @@ index 61fcd5e..a7c3eab 100644
      <string name="run">Run</string>
      <string name="edit">Edit</string>
      <string name="remove">Remove</string>
+diff --git a/app/src/main/res/values/vex_session.xml b/app/src/main/res/values/vex_session.xml
+new file mode 100644
+index 0000000..2811acd
+--- /dev/null
++++ b/app/src/main/res/values/vex_session.xml
+@@ -0,0 +1,22 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <style name="VexSessionButton" parent="Widget.AppCompat.Button.Borderless">
++        <item name="android:layout_width">match_parent</item>
++        <item name="android:layout_height">48dp</item>
++        <item name="android:gravity">center_vertical|start</item>
++        <item name="android:paddingStart">12dp</item>
++        <item name="android:paddingEnd">12dp</item>
++        <item name="android:textAllCaps">false</item>
++        <item name="android:textColor">#F4EAFF</item>
++        <item name="android:textSize">15sp</item>
++    </style>
++    <string name="vex_open_session_controls">Open session controls</string>
++    <string name="vex_close_session_controls">Close session controls</string>
++    <string name="vex_direct_touch">Mode · Direct touch</string>
++    <string name="vex_cursor_mode">Mode · Cursor</string>
++    <string name="vex_fullscreen">Fullscreen / Fit</string>
++    <string name="vex_session_menu">More controls</string>
++    <string name="vex_end_session">End session</string>
++    <string name="vex_confirm_end_session">Close the Windows session?</string>
++    <string name="vex_direct_touch_help">Tap to click, double-tap to open, hold to right-click, drag with one finger, and scroll with two fingers.</string>
++</resources>
 diff --git a/gradle/wrapper/gradle-wrapper.properties b/gradle/wrapper/gradle-wrapper.properties
 index b3fec1f..f18a0c2 100644
 --- a/gradle/wrapper/gradle-wrapper.properties
