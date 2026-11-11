@@ -1,10 +1,10 @@
 # VEX Win — POCO X6 Pro Edition
 
-VEX Win V0.1.1, Wine ve Box64 ile çalışan Windows oturumuna doğrudan dokunma ve mobil oturum kontrolleri ekler. Winlator 11.2 uygulama kaynakları [a030f55](https://github.com/brunodev85/winlator-app/tree/a030f552f452158a2db64fdb32b490fa19c0b48d) revizyonuna sabitlenmiştir. [VEX Win kaynak değişiklikleri](patches/vex-runtime.patch) derlemeden önce bu revizyona uygulanır.
+VEX Win V0.1.2, Wine ve Box64 ile çalışan Windows oturumlarına mobil bir çalışma alanı ekler. Winlator 11.2 uygulama kaynakları [a030f55](https://github.com/brunodev85/winlator-app/tree/a030f552f452158a2db64fdb32b490fa19c0b48d) revizyonuna sabitlenmiştir. [VEX Win kaynak değişiklikleri](patches/vex-runtime.patch) derlemeden önce bu revizyona uygulanır.
 
 ## APK ve cihaz testi
 
-[GitHub Actions](https://github.com/Geko7490/VexWinEmu/actions/workflows/android-runtime.yml) çalıştırmasındaki **VEX-Win-V0.1.1-Touch-arm64** paketi imzalı debug APK ve SHA-256 özeti içerir. Container ekranından Windows oturumunu aç. Sağ üstteki mor düğme dokunma modunu, Android klavyesini, tam ekranı ve oturum çıkışını açar.
+[GitHub Actions](https://github.com/Geko7490/VexWinEmu/actions/workflows/android-runtime.yml) çalıştırmasındaki **VEX-Win-V0.1.2-Workspace-arm64** paketi imzalı debug APK ve SHA-256 özeti içerir. Ana ekranda container seçebilir, Windows masaüstünü açabilir, masaüstü kısayollarında arama yapabilir ve son açılanlara dönebilirsin. Oturumun alt çubuğundan Başlat, Windows dosyaları, açık pencereler ve klavyeye erişebilirsin. Sağ üstteki mor düğme dokunma, imleç ve tam ekran kontrollerini açar.
 
 POCO X6 Pro’da Windows masaüstünü aç. Dosya Gezgini’nde dokunma, çift dokunma, uzun basma, pencere taşıma ve iki parmakla kaydırmayı dene. Not Defteri’nde Android klavyesinden Türkçe karakter gir. Tam ekran ve imleç modunu da dene. Kurulum hatası yaşanırsa Android logcat’te `VexWinRuntime` etiketini kontrol et.
 

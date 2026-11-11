@@ -1,5 +1,5 @@
 diff --git a/app/build.gradle b/app/build.gradle
-index 7690275..b97d3ae 100644
+index 7690275..dbe7ce8 100644
 --- a/app/build.gradle
 +++ b/app/build.gradle
 @@ -8,8 +8,8 @@ android {
@@ -8,18 +8,594 @@ index 7690275..b97d3ae 100644
          targetSdkVersion 28
 -        versionCode 33
 -        versionName "11.2"
-+        versionCode 34
-+        versionName "0.1.1-touch"
++        versionCode 35
++        versionName "0.1.2-workspace"
      }
  
      buildTypes {
+diff --git a/app/src/main/java/com/winlator/MainActivity.java b/app/src/main/java/com/winlator/MainActivity.java
+index dd126b1..84fb59d 100644
+--- a/app/src/main/java/com/winlator/MainActivity.java
++++ b/app/src/main/java/com/winlator/MainActivity.java
+@@ -10,6 +10,7 @@ import android.content.res.Configuration;
+ import android.net.Uri;
+ import android.os.Bundle;
+ import android.view.MenuItem;
++import android.view.View;
+ 
+ import androidx.annotation.IntRange;
+ import androidx.annotation.NonNull;
+@@ -25,13 +26,23 @@ import androidx.fragment.app.FragmentManager;
+ import androidx.preference.PreferenceManager;
+ 
+ import com.google.android.material.navigation.NavigationView;
++import com.winlator.container.Container;
++import com.winlator.container.ContainerManager;
++import com.winlator.container.Shortcut;
+ import com.winlator.contentdialog.AboutDialog;
+ import com.winlator.core.AppUtils;
+ import com.winlator.core.Callback;
+ import com.winlator.core.LocaleHelper;
+ import com.winlator.core.PreloaderDialog;
++import com.winlator.xenvironment.RootFS;
+ import com.winlator.xenvironment.RootFSInstaller;
+ 
++import org.json.JSONArray;
++import org.json.JSONException;
++
++import java.util.ArrayList;
++import java.util.List;
++
+ public class MainActivity extends AppCompatActivity implements NavigationView.OnNavigationItemSelectedListener {
+     public static final boolean DEBUG_MODE = false; // FIXME change to false
+     public static final @IntRange(from = 1, to = 19) byte CONTAINER_PATTERN_COMPRESSION_LEVEL = 9;
+@@ -46,6 +57,9 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
+     private Callback<Uri> openFileCallback;
+     private SharedPreferences preferences;
+     private Fragment currentFragment;
++    private View workspaceNavigation;
++    private static final String WORKSPACE_CONTAINER = "vex_workspace_container";
++    private static final String WORKSPACE_RECENT = "vex_workspace_recent";
+ 
+     @Override
+     protected void onCreate(Bundle savedInstanceState) {
+@@ -65,6 +79,13 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
+ 
+         Intent intent = getIntent();
+         editInputControls = intent.getBooleanExtra("edit_input_controls", false);
++        workspaceNavigation = findViewById(R.id.vex_workspace_nav);
++        workspaceNavigation.setVisibility(editInputControls ? View.GONE : View.VISIBLE);
++        findViewById(R.id.vex_nav_home).setOnClickListener(view -> showFragment(new VexWorkspaceFragment()));
++        findViewById(R.id.vex_nav_apps).setOnClickListener(view -> showWorkspaceApps());
++        findViewById(R.id.vex_nav_files).setOnClickListener(view -> showWorkspaceFiles());
++        findViewById(R.id.vex_nav_containers).setOnClickListener(view -> showFragment(new ContainersFragment()));
++        findViewById(R.id.vex_nav_settings).setOnClickListener(view -> showFragment(new SettingsFragment()));
+         if (editInputControls) {
+             selectedProfileId = intent.getIntExtra("selected_profile_id", 0);
+             actionBar.setHomeAsUpIndicator(R.drawable.icon_action_bar_back);
+@@ -72,9 +93,8 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
+             navigationView.setCheckedItem(R.id.menu_item_input_controls);
+         }
+         else {
+-            boolean showShortcutsFirst = preferences.getBoolean("show_shortcuts_first", false);
+-            int selectedMenuItemId = intent.getIntExtra("selected_menu_item_id", 0);
+-            int menuItemId = selectedMenuItemId > 0 ? selectedMenuItemId : (showShortcutsFirst ? R.id.menu_item_shortcuts : R.id.menu_item_containers);
++            int menuItemId = intent.getIntExtra("selected_menu_item_id", R.id.vex_menu_home);
++            if (navigationView.getMenu().findItem(menuItemId) == null) menuItemId = R.id.vex_menu_home;
+ 
+             actionBar.setHomeAsUpIndicator(R.drawable.icon_action_bar_menu);
+             onNavigationItemSelected(navigationView.getMenu().findItem(menuItemId));
+@@ -127,17 +147,20 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
+ 
+     @Override
+     public void onBackPressed() {
+-        if (currentFragment != null && currentFragment.isVisible()) {
+-            if (currentFragment instanceof BaseFileManagerFragment) {
+-                BaseFileManagerFragment fileManagerFragment = (BaseFileManagerFragment)currentFragment;
+-                if (fileManagerFragment.onBackPressed()) return;
+-            }
+-            else if (currentFragment instanceof ContainersFragment) {
+-                finish();
+-            }
++        if (drawerLayout.isDrawerOpen(GravityCompat.START)) {
++            drawerLayout.closeDrawers();
++            return;
+         }
+-
+-        showFragment(new ContainersFragment());
++        FragmentManager manager = getSupportFragmentManager();
++        Fragment shown = manager.findFragmentById(R.id.FLFragmentContainer);
++        if (shown instanceof BaseFileManagerFragment && ((BaseFileManagerFragment)shown).onBackPressed()) return;
++        if (manager.getBackStackEntryCount() > 0) {
++            manager.popBackStack();
++        }
++        else if (editInputControls || shown instanceof VexWorkspaceFragment) {
++            finish();
++        }
++        else showFragment(new VexWorkspaceFragment());
+     }
+ 
+     public void setOpenFileCallback(Callback<Uri> openFileCallback) {
+@@ -180,18 +203,14 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
+ 
+     @Override
+     public boolean onNavigationItemSelected(@NonNull MenuItem item) {
+-        FragmentManager fragmentManager = getSupportFragmentManager();
+-        if (fragmentManager.getBackStackEntryCount() > 0) {
+-            fragmentManager.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE);
+-        }
+-
+         switch (item.getItemId()) {
++            case R.id.vex_menu_home:
++                showFragment(new VexWorkspaceFragment());
++                break;
+             case R.id.menu_item_shortcuts:
+-                preferences.edit().putBoolean("show_shortcuts_first", true).apply();
+-                showFragment(new ShortcutsFragment());
++                showWorkspaceApps();
+                 break;
+             case R.id.menu_item_containers:
+-                preferences.edit().putBoolean("show_shortcuts_first", false).apply();
+                 showFragment(new ContainersFragment());
+                 break;
+             case R.id.menu_item_input_controls:
+@@ -209,6 +228,24 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
+ 
+     public void showFragment(Fragment fragment) {
+         FragmentManager fragmentManager = getSupportFragmentManager();
++        fragmentManager.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE);
++        if (fragment instanceof VexWorkspaceFragment) getSupportActionBar().hide();
++        else {
++            getSupportActionBar().show();
++            if (!editInputControls) getSupportActionBar().setHomeAsUpIndicator(R.drawable.icon_action_bar_menu);
++        }
++        int selected = 0;
++        if (fragment instanceof VexWorkspaceFragment) selected = R.id.vex_nav_home;
++        else if (fragment instanceof ShortcutsFragment) selected = R.id.vex_nav_apps;
++        else if (fragment instanceof ContainerFileManagerFragment) selected = R.id.vex_nav_files;
++        else if (fragment instanceof ContainersFragment || fragment instanceof ContainerDetailFragment) selected = R.id.vex_nav_containers;
++        else if (fragment instanceof SettingsFragment) selected = R.id.vex_nav_settings;
++        int[] destinations = {R.id.vex_nav_home, R.id.vex_nav_apps, R.id.vex_nav_files, R.id.vex_nav_containers, R.id.vex_nav_settings};
++        for (int id : destinations) {
++            View destination = findViewById(id);
++            destination.setSelected(id == selected);
++            destination.setBackgroundResource(id == selected ? R.drawable.vex_workspace_action : android.R.color.transparent);
++        }
+         fragmentManager.beginTransaction()
+             .replace(R.id.FLFragmentContainer, fragment)
+             .commit();
+@@ -216,4 +253,79 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
+         drawerLayout.closeDrawer(GravityCompat.START);
+         currentFragment = fragment;
+     }
++
++    public void showWorkspaceApps() {
++        showFragment(new ShortcutsFragment());
++    }
++
++    public void showWorkspaceControls() {
++        showFragment(new InputControlsFragment(0));
++    }
++
++    public void showWorkspaceFiles() {
++        Container container = workspaceContainer(new ContainerManager(this).getContainers());
++        if (container != null) showFragment(new ContainerFileManagerFragment(container.id));
++        else createWorkspaceContainer();
++    }
++
++    public void createWorkspaceContainer() {
++        if (!workspaceRuntimeReady()) return;
++        showFragment(new ContainerDetailFragment());
++    }
++
++    Container workspaceContainer(List<Container> containers) {
++        int saved = preferences.getInt(WORKSPACE_CONTAINER, 0);
++        Container first = null;
++        for (Container container : containers) {
++            if (container.id == saved) return container;
++            if (first == null || container.id < first.id) first = container;
++        }
++        return first;
++    }
++
++    void selectWorkspaceContainer(int id) {
++        preferences.edit().putInt(WORKSPACE_CONTAINER, id).apply();
++    }
++
++    private boolean workspaceRuntimeReady() {
++        if (RootFS.find(this).isValid()) return true;
++        AppUtils.showToast(this, R.string.vex_workspace_wait);
++        return false;
++    }
++
++    void launchWorkspaceDesktop(Container container) {
++        if (!workspaceRuntimeReady()) return;
++        selectWorkspaceContainer(container.id);
++        Intent intent = new Intent(this, XServerDisplayActivity.class);
++        intent.putExtra("container_id", container.id);
++        intent.putExtra("vex_mobile_workspace", true);
++        startActivity(intent);
++    }
++
++    void launchWorkspaceShortcut(Shortcut shortcut) {
++        if (!workspaceRuntimeReady() || !shortcut.file.isFile()) return;
++        String path = shortcut.file.getPath();
++        JSONArray history = new JSONArray();
++        history.put(path);
++        for (String previous : recentWorkspaceShortcuts()) {
++            if (history.length() == 5) break;
++            if (!previous.equals(path)) history.put(previous);
++        }
++        preferences.edit().putString(WORKSPACE_RECENT, history.toString()).apply();
++        Intent intent = new Intent(this, XServerDisplayActivity.class);
++        intent.putExtra("container_id", shortcut.container.id);
++        intent.putExtra("shortcut_path", path);
++        startActivity(intent);
++    }
++
++    List<String> recentWorkspaceShortcuts() {
++        List<String> paths = new ArrayList<>();
++        try {
++            JSONArray history = new JSONArray(preferences.getString(WORKSPACE_RECENT, "[]"));
++            for (int i = 0; i < history.length(); i++) paths.add(history.getString(i));
++        }
++        catch (JSONException ignored) {}
++        return paths;
++    }
++
+ }
+\ No newline at end of file
+diff --git a/app/src/main/java/com/winlator/ShortcutsFragment.java b/app/src/main/java/com/winlator/ShortcutsFragment.java
+index ca3c83b..393f70b 100644
+--- a/app/src/main/java/com/winlator/ShortcutsFragment.java
++++ b/app/src/main/java/com/winlator/ShortcutsFragment.java
+@@ -1,7 +1,6 @@
+ package com.winlator;
+ 
+ import android.content.Context;
+-import android.content.Intent;
+ import android.os.Build;
+ import android.os.Bundle;
+ import android.view.LayoutInflater;
+@@ -225,10 +224,7 @@ public class ShortcutsFragment extends BaseFileManagerFragment<Shortcut> {
+                 actionBar.setTitle(shortcut.name);
+             }
+             else {
+-                Intent intent = new Intent(activity, XServerDisplayActivity.class);
+-                intent.putExtra("container_id", shortcut.container.id);
+-                intent.putExtra("shortcut_path", shortcut.file.getPath());
+-                activity.startActivity(intent);
++                ((MainActivity)activity).launchWorkspaceShortcut(shortcut);
+             }
+         }
+     }
+diff --git a/app/src/main/java/com/winlator/VexWorkspaceFragment.java b/app/src/main/java/com/winlator/VexWorkspaceFragment.java
+new file mode 100644
+index 0000000..592dd0b
+--- /dev/null
++++ b/app/src/main/java/com/winlator/VexWorkspaceFragment.java
+@@ -0,0 +1,312 @@
++package com.winlator;
++
++import android.content.Context;
++import android.graphics.Typeface;
++import android.os.Bundle;
++import android.text.Editable;
++import android.text.TextWatcher;
++import android.text.TextUtils;
++import android.view.Gravity;
++import android.view.LayoutInflater;
++import android.view.View;
++import android.view.ViewGroup;
++import android.view.inputmethod.EditorInfo;
++import android.widget.Button;
++import android.widget.EditText;
++import android.widget.FrameLayout;
++import android.widget.ImageView;
++import android.widget.LinearLayout;
++import android.widget.ScrollView;
++import android.widget.TextView;
++
++import androidx.annotation.NonNull;
++import androidx.annotation.Nullable;
++import androidx.appcompat.app.AlertDialog;
++import androidx.core.content.ContextCompat;
++import androidx.fragment.app.Fragment;
++
++import com.winlator.container.Container;
++import com.winlator.container.ContainerManager;
++import com.winlator.container.Shortcut;
++import com.winlator.core.WineInfo;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.List;
++import java.util.Locale;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++
++public class VexWorkspaceFragment extends Fragment {
++    private ExecutorService loader;
++    private List<Container> containers = new ArrayList<>();
++    private List<Shortcut> shortcuts = new ArrayList<>();
++    private TextView containerName;
++    private TextView containerDetails;
++    private Button desktop;
++    private Button containerPicker;
++    private EditText search;
++    private LinearLayout results;
++    private TextView sectionTitle;
++    private int loadGeneration;
++
++    @Override
++    public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup parent, @Nullable Bundle state) {
++        loader = Executors.newSingleThreadExecutor();
++        Context context = requireContext();
++        ScrollView scroll = new ScrollView(context);
++        scroll.setFillViewport(true);
++        scroll.setClipToPadding(false);
++        scroll.setBackgroundResource(R.drawable.vex_workspace_background);
++
++        LinearLayout content = column();
++        content.setPadding(dp(18), dp(18), dp(18), dp(20));
++        content.setFocusableInTouchMode(true);
++        scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
++
++        LinearLayout header = new LinearLayout(context);
++        header.setGravity(Gravity.CENTER_VERTICAL);
++        ImageView logo = new ImageView(context);
++        logo.setImageResource(R.drawable.vex_workspace_logo);
++        header.addView(logo, new LinearLayout.LayoutParams(dp(48), dp(48)));
++        LinearLayout brand = column();
++        brand.setPadding(dp(10), 0, 0, 0);
++        brand.addView(label(getString(R.string.app_name), 27, true));
++        brand.addView(label(getString(R.string.vex_workspace_subtitle), 14, false));
++        header.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
++        add(content, header, 0);
++
++        FrameLayout hero = new FrameLayout(context);
++        hero.setBackgroundResource(R.drawable.vex_workspace_card);
++        hero.setClipToOutline(true);
++        ImageView waves = new ImageView(context);
++        waves.setImageResource(R.drawable.vex_workspace_wave);
++        waves.setScaleType(ImageView.ScaleType.FIT_XY);
++        hero.addView(waves, new FrameLayout.LayoutParams(-1, -1));
++        LinearLayout heroBody = column();
++        heroBody.setPadding(dp(16), dp(14), dp(16), dp(14));
++        hero.addView(heroBody, new FrameLayout.LayoutParams(-1, -2));
++        heroBody.addView(label(getString(R.string.vex_workspace_title), 21, true));
++        containerName = label(getString(R.string.vex_workspace_wait), 16, true);
++        add(heroBody, containerName, 10);
++        containerDetails = label("", 13, false);
++        add(heroBody, containerDetails, 3);
++
++        LinearLayout actions = new LinearLayout(context);
++        desktop = button(R.string.vex_workspace_open, true);
++        desktop.setEnabled(false);
++        desktop.setOnClickListener(view -> {
++            Container active = activity().workspaceContainer(containers);
++            if (active != null) activity().launchWorkspaceDesktop(active);
++            else activity().createWorkspaceContainer();
++        });
++        containerPicker = button(R.string.vex_workspace_choose, false);
++        containerPicker.setOnClickListener(view -> chooseContainer());
++        containerPicker.setVisibility(View.GONE);
++        actions.addView(desktop, new LinearLayout.LayoutParams(0, -2, 1));
++        LinearLayout.LayoutParams pickLayout = new LinearLayout.LayoutParams(0, -2, 1);
++        pickLayout.setMarginStart(dp(8));
++        actions.addView(containerPicker, pickLayout);
++        add(heroBody, actions, 12);
++        add(content, hero, 16);
++
++        LinearLayout entryPoints = new LinearLayout(context);
++        entryPoints.setBaselineAligned(false);
++        Button files = button(R.string.vex_files, false);
++        files.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.icon_open, 0, 0, 0);
++        files.setOnClickListener(view -> activity().showWorkspaceFiles());
++        entryPoints.addView(files, new LinearLayout.LayoutParams(0, -2, 1));
++        Button touch = button(R.string.vex_workspace_touch, false);
++        touch.setOnClickListener(view -> activity().showWorkspaceControls());
++        LinearLayout.LayoutParams touchLayout = new LinearLayout.LayoutParams(0, -2, 1);
++        touchLayout.setMarginStart(dp(8));
++        entryPoints.addView(touch, touchLayout);
++        add(content, entryPoints, 10);
++
++        search = new EditText(context);
++        search.setSingleLine();
++        search.setTextSize(15);
++        search.setHint(R.string.vex_workspace_search);
++        search.setHintTextColor(color(R.color.vex_workspace_muted));
++        search.setTextColor(color(R.color.vex_workspace_text));
++        search.setBackgroundResource(R.drawable.vex_workspace_tile);
++        search.setMinHeight(dp(48));
++        search.setPaddingRelative(dp(14), 0, dp(14), 0);
++        search.setImeOptions(EditorInfo.IME_ACTION_DONE);
++        search.addTextChangedListener(new TextWatcher() {
++            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
++            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { renderShortcuts(); }
++            @Override public void afterTextChanged(Editable text) {}
++        });
++        add(content, search, 18);
++
++        LinearLayout section = new LinearLayout(context);
++        section.setGravity(Gravity.CENTER_VERTICAL);
++        sectionTitle = label(getString(R.string.vex_workspace_apps), 17, true);
++        section.addView(sectionTitle, new LinearLayout.LayoutParams(0, -2, 1));
++        Button all = button(R.string.vex_workspace_all_apps, false);
++        all.setOnClickListener(view -> activity().showWorkspaceApps());
++        section.addView(all, new LinearLayout.LayoutParams(-2, -2));
++        add(content, section, 14);
++
++        results = column();
++        add(content, results, 4);
++        content.requestFocus();
++        return scroll;
++    }
++
++    @Override public void onResume() {
++        super.onResume();
++        int generation = ++loadGeneration;
++        MainActivity host = activity();
++        Context context = host.getApplicationContext();
++        loader.execute(() -> {
++            ContainerManager manager = new ContainerManager(context);
++            ArrayList<Container> loadedContainers = manager.getContainers();
++            loadedContainers.sort(Comparator.comparingInt(container -> container.id));
++            ArrayList<Shortcut> loadedShortcuts = manager.loadShortcuts(null);
++            loadedShortcuts.removeIf(shortcut -> shortcut.file.isDirectory() || TextUtils.isEmpty(shortcut.path));
++            loadedShortcuts.sort(Comparator.comparing(shortcut -> shortcut.name, String.CASE_INSENSITIVE_ORDER));
++            host.runOnUiThread(() -> {
++                if (loadGeneration != generation || !isAdded() || getView() == null) return;
++                containers = loadedContainers;
++                shortcuts = loadedShortcuts;
++                renderContainer();
++                renderShortcuts();
++            });
++        });
++    }
++
++    @Override public void onDestroyView() {
++        loadGeneration++;
++        loader.shutdownNow();
++        results = null;
++        search = null;
++        super.onDestroyView();
++    }
++
++    private void chooseContainer() {
++        String[] names = new String[containers.size()];
++        int checked = -1;
++        Container current = activity().workspaceContainer(containers);
++        for (int i = 0; i < containers.size(); i++) {
++            Container option = containers.get(i);
++            names[i] = option.getName();
++            if (current != null && current.id == option.id) checked = i;
++        }
++        new AlertDialog.Builder(requireContext()).setTitle(R.string.vex_workspace_choose)
++            .setSingleChoiceItems(names, checked, (dialog, which) -> {
++                activity().selectWorkspaceContainer(containers.get(which).id);
++                renderContainer();
++                dialog.dismiss();
++            }).setNegativeButton(android.R.string.cancel, null).show();
++    }
++
++    private void renderContainer() {
++        Container container = activity().workspaceContainer(containers);
++        desktop.setEnabled(true);
++        desktop.setText(container == null ? R.string.vex_workspace_setup : R.string.vex_workspace_open);
++        containerPicker.setVisibility(containers.size() > 1 ? View.VISIBLE : View.GONE);
++        if (container == null) {
++            containerName.setText(R.string.vex_workspace_no_container);
++            containerDetails.setText("");
++            return;
++        }
++        containerName.setText(container.getName());
++        containerDetails.setText(getString(R.string.vex_workspace_meta,
++            WineInfo.fromIdentifier(requireContext(), container.getWineVersion()).toString(), container.getScreenSize()));
++    }
++
++    private void renderShortcuts() {
++        if (results == null) return;
++        results.removeAllViews();
++        String query = search.getText().toString().trim().toLowerCase(Locale.ROOT);
++        List<Shortcut> displayed = new ArrayList<>();
++        if (query.isEmpty()) {
++            for (String path : activity().recentWorkspaceShortcuts()) {
++                for (Shortcut shortcut : shortcuts) {
++                    if (shortcut.file.getPath().equals(path)) {
++                        displayed.add(shortcut);
++                        break;
++                    }
++                }
++            }
++        }
++        boolean recent = !displayed.isEmpty();
++        sectionTitle.setText(recent ? R.string.vex_workspace_recent : R.string.vex_workspace_apps);
++        if (!recent) {
++            for (Shortcut shortcut : shortcuts) {
++                if (shortcut.name.toLowerCase(Locale.ROOT).contains(query)) displayed.add(shortcut);
++            }
++        }
++        if (displayed.isEmpty()) {
++            add(results, label(getString(query.isEmpty() ? R.string.vex_workspace_empty_apps : R.string.vex_workspace_no_results), 14, false), 4);
++            return;
++        }
++        int count = query.isEmpty() ? Math.min(displayed.size(), 6) : displayed.size();
++        for (int i = 0; i < count; i++) add(results, shortcutRow(displayed.get(i)), 7);
++    }
++
++    private View shortcutRow(Shortcut shortcut) {
++        LinearLayout row = new LinearLayout(requireContext());
++        row.setGravity(Gravity.CENTER_VERTICAL);
++        row.setMinimumHeight(dp(57));
++        row.setPaddingRelative(dp(11), dp(7), dp(10), dp(7));
++        row.setBackgroundResource(R.drawable.vex_workspace_tile);
++        row.setFocusable(true);
++        row.setOnClickListener(view -> activity().launchWorkspaceShortcut(shortcut));
++        ImageView icon = new ImageView(requireContext());
++        if (shortcut.icon != null) icon.setImageBitmap(shortcut.icon);
++        else icon.setImageResource(R.drawable.container_file_link);
++        row.addView(icon, new LinearLayout.LayoutParams(dp(34), dp(34)));
++        LinearLayout titles = column();
++        titles.setPaddingRelative(dp(10), 0, dp(8), 0);
++        titles.addView(label(shortcut.name, 15, true));
++        titles.addView(label(shortcut.container.getName(), 12, false));
++        row.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
++        ImageView launch = new ImageView(requireContext());
++        launch.setImageResource(R.drawable.icon_run);
++        launch.setColorFilter(color(R.color.vex_workspace_accent));
++        row.addView(launch, new LinearLayout.LayoutParams(dp(19), dp(19)));
++        return row;
++    }
++
++    private MainActivity activity() { return (MainActivity)requireActivity(); }
++
++    private LinearLayout column() {
++        LinearLayout layout = new LinearLayout(requireContext());
++        layout.setOrientation(LinearLayout.VERTICAL);
++        return layout;
++    }
++
++    private TextView label(String text, int size, boolean primary) {
++        TextView label = new TextView(requireContext());
++        label.setText(text);
++        label.setTextSize(size);
++        label.setTextColor(color(primary ? R.color.vex_workspace_text : R.color.vex_workspace_muted));
++        if (primary) label.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
++        return label;
++    }
++
++    private Button button(int text, boolean primary) {
++        Button button = new Button(requireContext());
++        button.setText(text);
++        button.setAllCaps(false);
++        button.setTextSize(13);
++        button.setTextColor(color(R.color.vex_workspace_text));
++        button.setBackgroundResource(primary ? R.drawable.vex_workspace_action : R.drawable.vex_workspace_tile);
++        button.setMinimumHeight(dp(48));
++        button.setPaddingRelative(dp(10), dp(6), dp(10), dp(6));
++        return button;
++    }
++
++    private void add(LinearLayout group, View view, int top) {
++        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
++        params.topMargin = dp(top);
++        group.addView(view, params);
++    }
++
++    private int color(int color) { return ContextCompat.getColor(requireContext(), color); }
++
++    private int dp(int value) { return Math.round(getResources().getDisplayMetrics().density * value); }
++}
 diff --git a/app/src/main/java/com/winlator/XServerDisplayActivity.java b/app/src/main/java/com/winlator/XServerDisplayActivity.java
-index 53fb456..254a65a 100644
+index 53fb456..37ef73f 100644
 --- a/app/src/main/java/com/winlator/XServerDisplayActivity.java
 +++ b/app/src/main/java/com/winlator/XServerDisplayActivity.java
-@@ -8,19 +8,24 @@ import android.content.Context;
+@@ -7,21 +7,28 @@ import android.content.ClipboardManager;
+ import android.content.Context;
  import android.content.Intent;
  import android.content.SharedPreferences;
++import android.content.pm.ActivityInfo;
  import android.content.res.Configuration;
 +import android.os.Build;
  import android.os.Bundle;
@@ -40,13 +616,19 @@ index 53fb456..254a65a 100644
  import androidx.annotation.Nullable;
 +import androidx.appcompat.app.AlertDialog;
  import androidx.appcompat.app.AppCompatActivity;
++import androidx.appcompat.widget.PopupMenu;
  import androidx.core.view.GravityCompat;
  import androidx.drawerlayout.widget.DrawerLayout;
-@@ -106,6 +111,12 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+ import androidx.preference.PreferenceManager;
+@@ -106,6 +113,16 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
      private XServerView xServerView;
      private InputControlsView inputControlsView;
      private TouchpadView touchpadView;
 +    private View sessionControls;
++    private View workspaceDock;
++    private MenuItem workspaceDockMenu;
++    private boolean workspaceDockEnabled;
++    private boolean sessionKeyboardVisible;
 +    private View sessionHandle;
 +    private View sessionPanel;
 +    private Button sessionMode;
@@ -55,21 +637,41 @@ index 53fb456..254a65a 100644
      private XEnvironment environment;
      private DrawerLayout drawerLayout;
      private Container container;
-@@ -152,7 +163,12 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -141,6 +158,9 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+     public void onCreate(Bundle savedInstanceState) {
+         AppUtils.setActivityTheme(this);
+         super.onCreate(savedInstanceState);
++        if (getIntent().getBooleanExtra("vex_mobile_workspace", false)) {
++            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
++        }
+         AppUtils.hideSystemUI(this);
+         AppUtils.keepScreenOn(this);
+         setContentView(R.layout.xserver_display_activity);
+@@ -152,7 +172,12 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
          clipboardManager = useAndroidClipboardOnWine ? (ClipboardManager)getSystemService(CLIPBOARD_SERVICE) : null;
  
          drawerLayout = findViewById(R.id.DrawerLayout);
 -        drawerLayout.setOnApplyWindowInsetsListener((view, windowInsets) -> windowInsets.replaceSystemWindowInsets(0, 0, 0, 0));
 +        drawerLayout.setOnApplyWindowInsetsListener((view, insets) -> {
 +            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && xServerView != null) {
-+                xServerView.getRenderer().setScreenOffsetYRelativeToCursor(insets.isVisible(WindowInsets.Type.ime()));
++                onSessionKeyboardVisibility(insets.isVisible(WindowInsets.Type.ime()));
 +            }
 +            return insets.replaceSystemWindowInsets(0, 0, 0, 0);
 +        });
          drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
  
          NavigationView navigationView = findViewById(R.id.NavigationView);
-@@ -245,7 +261,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -161,6 +186,9 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+         if (enableLogs) ProcessHelper.addDebugCallback(debugDialog = new DebugDialog(this));
+         Menu menu = navigationView.getMenu();
+         menu.findItem(R.id.menu_item_logs).setVisible(enableLogs);
++        workspaceDockMenu = menu.findItem(R.id.vex_menu_toggle_dock);
++        workspaceDockMenu.setVisible(!isGenerateWineprefix());
++        menu.findItem(R.id.vex_menu_rotate).setVisible(!isGenerateWineprefix());
+         navigationView.setNavigationItemSelectedListener(this);
+ 
+         rootFS = RootFS.find(this);
+@@ -245,7 +273,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
              @Override
              public void onMapWindow(Window window) {
                  if (!flags[0] && window.isRenderable() && !window.getClassName().isEmpty()) {
@@ -78,7 +680,7 @@ index 53fb456..254a65a 100644
                      preloaderDialog.closeOnUiThread();
                      flags[0] = true;
                  }
-@@ -297,8 +313,11 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -297,8 +325,11 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
      public void onWindowFocusChanged(boolean hasFocus) {
          super.onWindowFocusChanged(hasFocus);
  
@@ -91,7 +693,7 @@ index 53fb456..254a65a 100644
  
              if (winHandler != null && clipboardManager != null && clipboardManager.hasPrimaryClip()) {
                  ClipData primaryClip = clipboardManager.getPrimaryClip();
-@@ -321,6 +340,8 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -321,6 +352,8 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
  
      @Override
      public void onPause() {
@@ -100,10 +702,11 @@ index 53fb456..254a65a 100644
          ForegroundService.onPauseSession(this);
          super.onPause();
          if (environment != null && !isInPictureInPictureMode()) {
-@@ -333,10 +354,16 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -333,10 +366,17 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
      public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
          super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
          ForegroundService.setPipMode(isInPictureInPictureMode);
++        updateWorkspaceDock();
 +        if (sessionControls != null) {
 +            setSessionPanelOpen(false);
 +            sessionControls.setVisibility(isInPictureInPictureMode ? View.GONE : View.VISIBLE);
@@ -117,7 +720,7 @@ index 53fb456..254a65a 100644
          winHandler.stop();
          if (environment != null) environment.stopEnvironmentComponents();
          ForegroundService.stopSession(this);
-@@ -345,6 +372,10 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -345,6 +385,10 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
  
      @Override
      public void onBackPressed() {
@@ -128,7 +731,7 @@ index 53fb456..254a65a 100644
          if (environment != null) {
              if (!drawerLayout.isDrawerOpen(GravityCompat.START)) {
                  drawerLayout.openDrawer(GravityCompat.START);
-@@ -358,14 +389,15 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -358,14 +402,15 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
          final GLRenderer renderer = xServerView.getRenderer();
          switch (item.getItemId()) {
              case R.id.menu_item_keyboard:
@@ -145,15 +748,94 @@ index 53fb456..254a65a 100644
                  renderer.toggleFullscreen();
                  drawerLayout.closeDrawers();
                  break;
-@@ -619,8 +651,85 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -409,6 +454,15 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+                 debugDialog.show();
+                 drawerLayout.closeDrawers();
+                 break;
++            case R.id.vex_menu_toggle_dock:
++                workspaceDockEnabled = !workspaceDockEnabled;
++                updateWorkspaceDock();
++                drawerLayout.closeDrawers();
++                break;
++            case R.id.vex_menu_rotate:
++                drawerLayout.closeDrawers();
++                rotateWorkspace();
++                break;
+             case R.id.menu_item_touchpad_help:
+                 showTouchpadHelpDialog();
+                 break;
+@@ -619,8 +673,148 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
              }
          }
  
-+        if (!isGenerateWineprefix()) setupSessionControls(rootView);
++        if (!isGenerateWineprefix()) {
++            setupWorkspaceDock(rootView);
++            setupSessionControls(rootView);
++        }
          if (MainActivity.DEBUG_MODE) rootView.addView(AppUtils.createDebugMsgTextView(this));
 -        AppUtils.observeSoftKeyboardVisibility(drawerLayout, renderer::setScreenOffsetYRelativeToCursor);
 +        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) drawerLayout.requestApplyInsets();
-+        else AppUtils.observeSoftKeyboardVisibility(drawerLayout, renderer::setScreenOffsetYRelativeToCursor);
++        else AppUtils.observeSoftKeyboardVisibility(drawerLayout, this::onSessionKeyboardVisibility);
++    }
++
++    private void setupWorkspaceDock(FrameLayout rootView) {
++        workspaceDockEnabled = shortcut == null && !getIntent().hasExtra("exec_path");
++        workspaceDock = getLayoutInflater().inflate(R.layout.vex_workspace_dock, rootView, false);
++        workspaceDock.findViewById(R.id.vex_dock_start).setOnClickListener(this::openWorkspaceStart);
++        workspaceDock.findViewById(R.id.vex_dock_files).setOnClickListener(view -> openWindowsFiles());
++        workspaceDock.findViewById(R.id.vex_dock_windows).setOnClickListener(view -> new ActiveWindowsDialog(this).show());
++        workspaceDock.findViewById(R.id.vex_dock_keyboard).setOnClickListener(view -> toggleSessionKeyboard());
++        rootView.addView(workspaceDock);
++        updateWorkspaceDock();
++    }
++
++    private void openWorkspaceStart(View anchor) {
++        PopupMenu start = new PopupMenu(this, anchor);
++        start.getMenu().add(R.string.vex_workspace_show_desktop).setOnMenuItemClickListener(item -> {
++            winHandler.showDesktop();
++            return true;
++        });
++        start.getMenu().add(R.string.vex_workspace_file_manager).setOnMenuItemClickListener(item -> {
++            openWindowsFiles();
++            return true;
++        });
++        start.getMenu().add(R.string.vex_workspace_notepad).setOnMenuItemClickListener(item -> {
++            winHandler.exec("C:\\windows\\notepad.exe", null);
++            return true;
++        });
++        start.getMenu().add(R.string.vex_workspace_rotate).setOnMenuItemClickListener(item -> {
++            rotateWorkspace();
++            return true;
++        });
++        start.getMenu().add(R.string.vex_workspace_hide_dock).setOnMenuItemClickListener(item -> {
++            workspaceDockEnabled = false;
++            updateWorkspaceDock();
++            return true;
++        });
++        start.show();
++    }
++
++    private void openWindowsFiles() {
++        winHandler.exec("C:\\windows\\wfm.exe", null);
++    }
++
++    private void rotateWorkspace() {
++        touchpadView.cancelTouchInput();
++        boolean portrait = getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT;
++        setRequestedOrientation(portrait ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE : ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
++    }
++
++    private void onSessionKeyboardVisibility(boolean visible) {
++        sessionKeyboardVisible = visible;
++        xServerView.getRenderer().setScreenOffsetYRelativeToCursor(visible);
++        updateWorkspaceDock();
++    }
++
++    private void updateWorkspaceDock() {
++        if (workspaceDock == null) return;
++        boolean visible = workspaceDockEnabled && !sessionKeyboardVisible && !isInPictureInPictureMode();
++        workspaceDock.setVisibility(visible ? View.VISIBLE : View.GONE);
++        workspaceDockMenu.setTitle(workspaceDockEnabled ? R.string.vex_workspace_hide_dock : R.string.vex_workspace_show_dock);
 +    }
 +
 +    private void setupSessionControls(FrameLayout rootView) {
@@ -232,7 +914,7 @@ index 53fb456..254a65a 100644
      }
  
      private void showInputControlsDialog() {
-@@ -678,6 +787,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -678,6 +872,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
      }
  
      private void showInputControls(ControlsProfile profile) {
@@ -240,7 +922,7 @@ index 53fb456..254a65a 100644
          inputControlsView.setVisibility(View.VISIBLE);
          inputControlsView.requestFocus();
          inputControlsView.setProfile(profile);
-@@ -696,6 +806,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -696,6 +891,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
          }
  
          inputControlsView.invalidate();
@@ -248,7 +930,7 @@ index 53fb456..254a65a 100644
      }
  
      private void hideInputControls() {
-@@ -713,6 +824,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -713,6 +909,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
          }
  
          inputControlsView.invalidate();
@@ -256,7 +938,7 @@ index 53fb456..254a65a 100644
      }
  
      private void extractGraphicsDriverFiles() {
-@@ -779,6 +891,15 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -779,6 +976,15 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
      }
  
      private void showTouchpadHelpDialog() {
@@ -272,7 +954,7 @@ index 53fb456..254a65a 100644
          ContentDialog dialog = new ContentDialog(this, R.layout.touchpad_help_dialog);
          dialog.setTitle(R.string.touchpad_help);
          dialog.setIcon(R.drawable.icon_help);
-@@ -788,13 +909,18 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
+@@ -788,13 +994,18 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
  
      @Override
      public boolean dispatchGenericMotionEvent(MotionEvent event) {
@@ -294,6 +976,20 @@ index 53fb456..254a65a 100644
      }
  
      public InputControlsView getInputControlsView() {
+diff --git a/app/src/main/java/com/winlator/container/Shortcut.java b/app/src/main/java/com/winlator/container/Shortcut.java
+index 4bf0183..8ed34aa 100644
+--- a/app/src/main/java/com/winlator/container/Shortcut.java
++++ b/app/src/main/java/com/winlator/container/Shortcut.java
+@@ -46,7 +46,8 @@ public class Shortcut {
+             for (String line : FileUtils.readLines(file, true)) {
+                 if (line.startsWith("#")) continue;
+                 if (line.startsWith("[")) {
+-                    section = line.substring(1, line.indexOf("]"));
++                    int closingBracket = line.indexOf(']');
++                    section = closingBracket > 1 ? line.substring(1, closingBracket) : "";
+                 }
+                 else {
+                     index = line.indexOf("=");
 diff --git a/app/src/main/java/com/winlator/contentdialog/AboutDialog.java b/app/src/main/java/com/winlator/contentdialog/AboutDialog.java
 index 84f2567..4068199 100644
 --- a/app/src/main/java/com/winlator/contentdialog/AboutDialog.java
@@ -1067,6 +1763,116 @@ index 0000000..d6e6d4d
 +    <stroke android:width="1dp" android:color="#A389D4" />
 +    <corners android:radius="16dp" />
 +</shape>
+diff --git a/app/src/main/res/drawable/vex_workspace_action.xml b/app/src/main/res/drawable/vex_workspace_action.xml
+new file mode 100644
+index 0000000..c63079a
+--- /dev/null
++++ b/app/src/main/res/drawable/vex_workspace_action.xml
+@@ -0,0 +1,3 @@
++<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#609B82FF">
++    <item android:drawable="@drawable/vex_workspace_primary" />
++</ripple>
+diff --git a/app/src/main/res/drawable/vex_workspace_background.xml b/app/src/main/res/drawable/vex_workspace_background.xml
+new file mode 100644
+index 0000000..0d76d74
+--- /dev/null
++++ b/app/src/main/res/drawable/vex_workspace_background.xml
+@@ -0,0 +1,3 @@
++<shape xmlns:android="http://schemas.android.com/apk/res/android">
++    <gradient android:angle="315" android:startColor="#10162F" android:centerColor="#131633" android:endColor="#241746" />
++</shape>
+diff --git a/app/src/main/res/drawable/vex_workspace_card.xml b/app/src/main/res/drawable/vex_workspace_card.xml
+new file mode 100644
+index 0000000..005c3ed
+--- /dev/null
++++ b/app/src/main/res/drawable/vex_workspace_card.xml
+@@ -0,0 +1,5 @@
++<shape xmlns:android="http://schemas.android.com/apk/res/android">
++    <gradient android:angle="315" android:startColor="#262E50" android:endColor="#242044" />
++    <stroke android:width="1dp" android:color="#515487" />
++    <corners android:radius="20dp" />
++</shape>
+diff --git a/app/src/main/res/drawable/vex_workspace_home.xml b/app/src/main/res/drawable/vex_workspace_home.xml
+new file mode 100644
+index 0000000..a210319
+--- /dev/null
++++ b/app/src/main/res/drawable/vex_workspace_home.xml
+@@ -0,0 +1,4 @@
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="23dp" android:height="23dp" android:viewportWidth="24" android:viewportHeight="24">
++    <path android:fillColor="#FFFFFF" android:pathData="M3,3h8v8h-8z M13,3h8v8h-8z M3,13h8v8h-8z M13,13h8v8h-8z" />
++</vector>
+diff --git a/app/src/main/res/drawable/vex_workspace_logo.xml b/app/src/main/res/drawable/vex_workspace_logo.xml
+new file mode 100644
+index 0000000..129a040
+--- /dev/null
++++ b/app/src/main/res/drawable/vex_workspace_logo.xml
+@@ -0,0 +1,8 @@
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="46dp" android:height="46dp" android:viewportWidth="48" android:viewportHeight="48">
++    <path android:fillColor="#473DD0" android:strokeColor="#9E98FF" android:strokeWidth="1.1"
++        android:pathData="M6,15 Q6,12 9,11 L30,4 Q33,3 33,7 L33,27 Q33,30 30,31 L9,38 Q6,39 6,36Z" />
++    <path android:fillColor="#7952E7" android:strokeColor="#D0BCFF" android:strokeWidth="1.1"
++        android:pathData="M16,22 Q16,19 19,18 L39,11 Q42,10 42,14 L42,33 Q42,36 39,37 L19,44 Q16,45 16,42Z" />
++    <path android:fillColor="#B9A9FF" android:pathData="M21,25 L37,19 L37,21 L21,27Z" />
++</vector>
+diff --git a/app/src/main/res/drawable/vex_workspace_primary.xml b/app/src/main/res/drawable/vex_workspace_primary.xml
+new file mode 100644
+index 0000000..4fbd5ac
+--- /dev/null
++++ b/app/src/main/res/drawable/vex_workspace_primary.xml
+@@ -0,0 +1,5 @@
++<shape xmlns:android="http://schemas.android.com/apk/res/android">
++    <gradient android:angle="0" android:startColor="#5142CB" android:endColor="#7445C8" />
++    <stroke android:width="1dp" android:color="#AA8EFF" />
++    <corners android:radius="14dp" />
++</shape>
+diff --git a/app/src/main/res/drawable/vex_workspace_tile.xml b/app/src/main/res/drawable/vex_workspace_tile.xml
+new file mode 100644
+index 0000000..5dba4dd
+--- /dev/null
++++ b/app/src/main/res/drawable/vex_workspace_tile.xml
+@@ -0,0 +1,9 @@
++<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#509985FF">
++    <item>
++        <shape>
++            <solid android:color="#2D3153" />
++            <stroke android:width="1dp" android:color="#484D79" />
++            <corners android:radius="14dp" />
++        </shape>
++    </item>
++</ripple>
+diff --git a/app/src/main/res/drawable/vex_workspace_wave.xml b/app/src/main/res/drawable/vex_workspace_wave.xml
+new file mode 100644
+index 0000000..be19f54
+--- /dev/null
++++ b/app/src/main/res/drawable/vex_workspace_wave.xml
+@@ -0,0 +1,8 @@
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="400dp" android:height="160dp" android:viewportWidth="400" android:viewportHeight="160">
++    <path android:fillColor="#2B483DDF" android:pathData="M0,151 C80,155 126,77 215,89 C289,102 337,17 400,20 L400,160 L0,160Z" />
++    <path android:fillColor="#40723EF0" android:pathData="M39,160 C130,159 130,113 211,122 C300,133 323,34 400,41 L400,160Z" />
++    <path android:fillColor="#55784AEF" android:pathData="M159,160 C228,148 260,157 309,99 C336,66 371,69 400,52 L400,160Z" />
++    <path android:strokeColor="#A19572FF" android:strokeWidth="1.1" android:pathData="M7,151 C80,155 126,77 215,89 C289,102 337,17 400,20" />
++    <path android:strokeColor="#BEA27AFF" android:strokeWidth="1.1" android:pathData="M39,160 C130,159 130,113 211,122 C300,133 323,34 400,41" />
++</vector>
+diff --git a/app/src/main/res/layout/main_activity.xml b/app/src/main/res/layout/main_activity.xml
+index 23dc1e4..042b183 100644
+--- a/app/src/main/res/layout/main_activity.xml
++++ b/app/src/main/res/layout/main_activity.xml
+@@ -22,8 +22,11 @@
+         <FrameLayout
+             android:id="@+id/FLFragmentContainer"
+             android:layout_width="match_parent"
+-            android:layout_height="match_parent"
++            android:layout_height="0dp"
++            android:layout_weight="1"
+             app:layout_behavior="@string/appbar_scrolling_view_behavior"/>
++
++        <include layout="@layout/vex_workspace_nav" />
+     </LinearLayout>
+ 
+     <com.google.android.material.navigation.NavigationView
 diff --git a/app/src/main/res/layout/vex_session_controls.xml b/app/src/main/res/layout/vex_session_controls.xml
 new file mode 100644
 index 0000000..18c4cbf
@@ -1130,6 +1936,80 @@ index 0000000..18c4cbf
 +            android:text="@string/vex_end_session" />
 +    </LinearLayout>
 +</LinearLayout>
+diff --git a/app/src/main/res/layout/vex_workspace_dock.xml b/app/src/main/res/layout/vex_workspace_dock.xml
+new file mode 100644
+index 0000000..28599b5
+--- /dev/null
++++ b/app/src/main/res/layout/vex_workspace_dock.xml
+@@ -0,0 +1,22 @@
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:layout_width="wrap_content" android:layout_height="56dp"
++    android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="9dp"
++    android:gravity="center_vertical" android:orientation="horizontal"
++    android:paddingStart="6dp" android:paddingEnd="6dp"
++    android:background="@drawable/vex_session_surface">
++
++    <Button android:id="@+id/vex_dock_start" android:layout_width="wrap_content" android:layout_height="46dp"
++        android:drawableStart="@drawable/vex_workspace_home" android:drawablePadding="7dp"
++        android:drawableTint="#EEE6FF" android:background="@drawable/vex_workspace_action"
++        android:paddingStart="12dp" android:paddingEnd="12dp" android:minWidth="0dp"
++        android:text="@string/vex_workspace_start" android:textAllCaps="false" android:textColor="#FFFFFF" />
++
++    <ImageButton android:id="@+id/vex_dock_files" style="@style/VexWorkspaceDockButton"
++        android:src="@drawable/icon_open" android:contentDescription="@string/vex_workspace_file_manager" />
++
++    <ImageButton android:id="@+id/vex_dock_windows" style="@style/VexWorkspaceDockButton"
++        android:src="@drawable/icon_active_windows" android:contentDescription="@string/active_windows" />
++
++    <ImageButton android:id="@+id/vex_dock_keyboard" style="@style/VexWorkspaceDockButton"
++        android:src="@drawable/icon_keyboard" android:contentDescription="@string/keyboard" />
++</LinearLayout>
+diff --git a/app/src/main/res/layout/vex_workspace_nav.xml b/app/src/main/res/layout/vex_workspace_nav.xml
+new file mode 100644
+index 0000000..2e962b8
+--- /dev/null
++++ b/app/src/main/res/layout/vex_workspace_nav.xml
+@@ -0,0 +1,15 @@
++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@+id/vex_workspace_nav" android:layout_width="match_parent"
++    android:layout_height="64dp" android:orientation="horizontal" android:gravity="center_vertical"
++    android:paddingStart="6dp" android:paddingEnd="6dp" android:background="#171931">
++    <Button android:id="@+id/vex_nav_home" style="@style/VexWorkspaceNav" android:text="@string/vex_home"
++        android:drawableTop="@drawable/vex_workspace_home" />
++    <Button android:id="@+id/vex_nav_apps" style="@style/VexWorkspaceNav" android:text="@string/vex_apps"
++        android:drawableTop="@drawable/icon_shortcut" />
++    <Button android:id="@+id/vex_nav_files" style="@style/VexWorkspaceNav" android:text="@string/vex_files"
++        android:drawableTop="@drawable/icon_open" />
++    <Button android:id="@+id/vex_nav_containers" style="@style/VexWorkspaceNav" android:text="@string/vex_containers"
++        android:drawableTop="@drawable/icon_container" />
++    <Button android:id="@+id/vex_nav_settings" style="@style/VexWorkspaceNav" android:text="@string/vex_settings"
++        android:drawableTop="@drawable/icon_settings" />
++</LinearLayout>
+diff --git a/app/src/main/res/menu/main_menu.xml b/app/src/main/res/menu/main_menu.xml
+index 40a7b19..8313be1 100644
+--- a/app/src/main/res/menu/main_menu.xml
++++ b/app/src/main/res/menu/main_menu.xml
+@@ -2,6 +2,7 @@
+ <menu
+   xmlns:android="http://schemas.android.com/apk/res/android">
+     <group android:checkableBehavior="single">
++        <item android:icon="@drawable/vex_workspace_home" android:id="@+id/vex_menu_home" android:title="@string/vex_home" />
+         <item android:icon="@drawable/icon_shortcut" android:id="@+id/menu_item_shortcuts" android:title="@string/shortcuts" />
+         <item android:icon="@drawable/icon_container" android:id="@+id/menu_item_containers" android:title="@string/containers" />
+         <item android:icon="@drawable/icon_input_controls" android:id="@+id/menu_item_input_controls" android:title="@string/input_controls" />
+diff --git a/app/src/main/res/menu/xserver_menu.xml b/app/src/main/res/menu/xserver_menu.xml
+index 81fd492..5ebf917 100644
+--- a/app/src/main/res/menu/xserver_menu.xml
++++ b/app/src/main/res/menu/xserver_menu.xml
+@@ -11,6 +11,8 @@
+         <item android:icon="@drawable/icon_screen_effect" android:id="@+id/menu_item_screen_effect" android:title="@string/screen_effect" />
+         <item android:icon="@drawable/icon_pip_mode" android:id="@+id/menu_item_pip_mode" android:title="@string/pip_mode" />
+         <item android:icon="@drawable/icon_debug" android:id="@+id/menu_item_logs" android:title="@string/logs" />
++        <item android:icon="@drawable/vex_workspace_home" android:id="@+id/vex_menu_toggle_dock" android:title="@string/vex_workspace_hide_dock" />
++        <item android:icon="@drawable/icon_fullscreen" android:id="@+id/vex_menu_rotate" android:title="@string/vex_workspace_rotate" />
+         <item android:icon="@drawable/icon_help" android:id="@+id/menu_item_touchpad_help" android:title="@string/touchpad_help" />
+         <item android:icon="@drawable/icon_exit" android:id="@+id/menu_item_exit" android:title="@string/exit" />
+     </group>
 diff --git a/app/src/main/res/values-pt/strings.xml b/app/src/main/res/values-pt/strings.xml
 index e2d342c..be730c4 100644
 --- a/app/src/main/res/values-pt/strings.xml
@@ -1173,6 +2053,41 @@ index 0000000..f0b9019
 +    <string name="vex_confirm_end_session">Windows oturumu kapatılsın mı?</string>
 +    <string name="vex_direct_touch_help">Tıklamak için dokun, açmak için çift dokun, sağ tık için basılı tut. Tek parmakla sürükle, iki parmakla kaydır.</string>
 +</resources>
+diff --git a/app/src/main/res/values-tr/vex_workspace.xml b/app/src/main/res/values-tr/vex_workspace.xml
+new file mode 100644
+index 0000000..356d295
+--- /dev/null
++++ b/app/src/main/res/values-tr/vex_workspace.xml
+@@ -0,0 +1,29 @@
++<resources>
++    <string name="vex_home">Ana ekran</string>
++    <string name="vex_apps">Uygulamalar</string>
++    <string name="vex_files">Dosyalar</string>
++    <string name="vex_containers">Container’lar</string>
++    <string name="vex_settings">Ayarlar</string>
++    <string name="vex_workspace_subtitle">Windows çalışma alanı</string>
++    <string name="vex_workspace_title">Windows masaüstü</string>
++    <string name="vex_workspace_open">Masaüstünü aç</string>
++    <string name="vex_workspace_setup">Container oluştur</string>
++    <string name="vex_workspace_no_container">Windows uygulamalarını açmak için bir container oluştur.</string>
++    <string name="vex_workspace_choose">Container seç</string>
++    <string name="vex_workspace_meta">%1$s · %2$s</string>
++    <string name="vex_workspace_search">Masaüstü kısayollarında ara</string>
++    <string name="vex_workspace_apps">Masaüstü kısayolları</string>
++    <string name="vex_workspace_recent">Son açılanlar</string>
++    <string name="vex_workspace_all_apps">Tüm uygulamalar</string>
++    <string name="vex_workspace_empty_apps">Windows masaüstüne kaydedilen kısayollar burada görünür.</string>
++    <string name="vex_workspace_no_results">Eşleşen kısayol yok.</string>
++    <string name="vex_workspace_touch">Dokunmatik kontroller</string>
++    <string name="vex_workspace_start">Başlat</string>
++    <string name="vex_workspace_show_desktop">Masaüstünü göster</string>
++    <string name="vex_workspace_file_manager">Windows dosyaları</string>
++    <string name="vex_workspace_notepad">Not Defteri</string>
++    <string name="vex_workspace_rotate">Dikey / Yatay</string>
++    <string name="vex_workspace_hide_dock">Görev çubuğunu gizle</string>
++    <string name="vex_workspace_show_dock">Görev çubuğunu göster</string>
++    <string name="vex_workspace_wait">Windows hazırlanıyor…</string>
++</resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
 index 61fcd5e..a7c3eab 100644
 --- a/app/src/main/res/values/strings.xml
@@ -1212,6 +2127,78 @@ index 0000000..2811acd
 +    <string name="vex_end_session">End session</string>
 +    <string name="vex_confirm_end_session">Close the Windows session?</string>
 +    <string name="vex_direct_touch_help">Tap to click, double-tap to open, hold to right-click, drag with one finger, and scroll with two fingers.</string>
++</resources>
+diff --git a/app/src/main/res/values/vex_workspace.xml b/app/src/main/res/values/vex_workspace.xml
+new file mode 100644
+index 0000000..d49e578
+--- /dev/null
++++ b/app/src/main/res/values/vex_workspace.xml
+@@ -0,0 +1,32 @@
++<resources>
++    <color name="vex_workspace_text">#F7F3FF</color>
++    <color name="vex_workspace_muted">#CCC8E9</color>
++    <color name="vex_workspace_accent">#C0ADFF</color>
++    <string name="vex_home">Home</string>
++    <string name="vex_apps">Apps</string>
++    <string name="vex_files">Files</string>
++    <string name="vex_containers">Containers</string>
++    <string name="vex_settings">Settings</string>
++    <string name="vex_workspace_subtitle">Windows workspace</string>
++    <string name="vex_workspace_title">Open Windows desktop</string>
++    <string name="vex_workspace_open">Open desktop</string>
++    <string name="vex_workspace_setup">Set up a container</string>
++    <string name="vex_workspace_no_container">Create a container to open Windows apps.</string>
++    <string name="vex_workspace_choose">Choose container</string>
++    <string name="vex_workspace_meta">%1$s · %2$s</string>
++    <string name="vex_workspace_search">Search desktop shortcuts</string>
++    <string name="vex_workspace_apps">Desktop shortcuts</string>
++    <string name="vex_workspace_recent">Recently opened</string>
++    <string name="vex_workspace_all_apps">All apps</string>
++    <string name="vex_workspace_empty_apps">Shortcuts saved to a Windows desktop appear here.</string>
++    <string name="vex_workspace_no_results">No matching shortcuts.</string>
++    <string name="vex_workspace_touch">Touch controls</string>
++    <string name="vex_workspace_start">Start</string>
++    <string name="vex_workspace_show_desktop">Show desktop</string>
++    <string name="vex_workspace_file_manager">Windows files</string>
++    <string name="vex_workspace_notepad">Notepad</string>
++    <string name="vex_workspace_rotate">Portrait / Landscape</string>
++    <string name="vex_workspace_hide_dock">Hide taskbar</string>
++    <string name="vex_workspace_show_dock">Show taskbar</string>
++    <string name="vex_workspace_wait">Preparing Windows…</string>
++</resources>
+diff --git a/app/src/main/res/values/vex_workspace_styles.xml b/app/src/main/res/values/vex_workspace_styles.xml
+new file mode 100644
+index 0000000..6542f24
+--- /dev/null
++++ b/app/src/main/res/values/vex_workspace_styles.xml
+@@ -0,0 +1,28 @@
++<resources>
++    <style name="VexWorkspaceNav" parent="Widget.AppCompat.Button.Borderless">
++        <item name="android:layout_width">0dp</item>
++        <item name="android:layout_weight">1</item>
++        <item name="android:layout_height">56dp</item>
++        <item name="android:layout_marginStart">2dp</item>
++        <item name="android:layout_marginEnd">2dp</item>
++        <item name="android:paddingTop">8dp</item>
++        <item name="android:paddingBottom">6dp</item>
++        <item name="android:paddingStart">0dp</item>
++        <item name="android:paddingEnd">0dp</item>
++        <item name="android:minWidth">0dp</item>
++        <item name="android:drawableTint">@color/vex_workspace_accent</item>
++        <item name="android:drawablePadding">3dp</item>
++        <item name="android:textColor">@color/vex_workspace_text</item>
++        <item name="android:textAllCaps">false</item>
++        <item name="android:textSize">10sp</item>
++        <item name="android:singleLine">true</item>
++        <item name="android:ellipsize">end</item>
++    </style>
++    <style name="VexWorkspaceDockButton">
++        <item name="android:layout_width">48dp</item>
++        <item name="android:layout_height">48dp</item>
++        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
++        <item name="android:scaleType">centerInside</item>
++        <item name="android:tint">@color/vex_workspace_accent</item>
++    </style>
 +</resources>
 diff --git a/gradle/wrapper/gradle-wrapper.properties b/gradle/wrapper/gradle-wrapper.properties
 index b3fec1f..f18a0c2 100644
