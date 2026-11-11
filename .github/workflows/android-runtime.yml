@@ -21,7 +21,18 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Install Android toolchain
-        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0' 'ndk;24.0.8215888' 'cmake;3.22.1'
+        run: |
+          sdk="$RUNNER_TEMP/vex-android-sdk"
+          cli="$RUNNER_TEMP/android-cli.zip"
+          mkdir -p "$sdk"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o "$cli"
+          printf '%s  %s\n' 2d2d50857e4eb553af5a6dc3ad507a17adf43d115264b1afc116f95c92e5e258 "$cli" | sha256sum -c
+          unzip -q "$cli" -d "$RUNNER_TEMP/vex-android-cli"
+          sdkmanager="$RUNNER_TEMP/vex-android-cli/cmdline-tools/bin/sdkmanager"
+          "$sdkmanager" --sdk_root="$sdk" --licenses < <(yes) > /dev/null
+          "$sdkmanager" --sdk_root="$sdk" 'platforms;android-35' 'platform-tools' 'build-tools;34.0.0' 'ndk;24.0.8215888' 'cmake;3.22.1'
+          printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$sdk" "$sdk" >> "$GITHUB_ENV"
       - name: Prepare Winlator source
         run: bash scripts/prepare-runtime.sh
       - name: Assemble ARM64 APK
