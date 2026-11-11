@@ -1,0 +1,46 @@
+name: VEX Win Android Runtime
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arm64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android toolchain
+        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0' 'ndk;24.0.8215888' 'cmake;3.22.1'
+      - name: Prepare Winlator source
+        run: bash scripts/prepare-runtime.sh
+      - name: Assemble ARM64 APK
+        working-directory: work/winlator
+        run: bash gradlew --no-daemon :app:assembleDebug
+      - name: Verify and stage APK
+        run: |
+          mkdir -p dist
+          apk=dist/VEX-Win-V0.1-Runtime-arm64.apk
+          cp work/winlator/app/build/outputs/apk/debug/app-debug.apk "$apk"
+          build_tools="$ANDROID_HOME/build-tools/34.0.0"
+          "$build_tools/apksigner" verify --verbose "$apk"
+          "$build_tools/aapt" dump badging "$apk" | grep -F "name='com.winlator' versionCode='33' versionName='0.1-runtime'"
+          python3 scripts/verify-apk.py "$apk"
+          cp LICENSE THIRD_PARTY.md dist/
+          (cd dist && sha256sum VEX-Win-V0.1-Runtime-arm64.apk > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VEX-Win-V0.1-Runtime-arm64
+          path: dist/
+          compression-level: 0
+          if-no-files-found: error
