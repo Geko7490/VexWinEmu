@@ -37,7 +37,7 @@ jobs:
         run: bash scripts/prepare-runtime.sh
       - name: Assemble ARM64 APK
         working-directory: work/winlator
-        run: bash gradlew --no-daemon :app:assembleDebug
+        run: bash gradlew --no-daemon --max-workers=4 -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=768m" :app:assembleDebug
       - name: Verify and stage APK
         run: |
           mkdir -p dist
