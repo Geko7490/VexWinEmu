@@ -1,23 +1,24 @@
-# VEX Win — POCO X6 Pro Edition
+# VEX Win Emulator V0.2 — Game Library
 
-VEX Win V0.1.2, Wine ve Box64 ile çalışan Windows oturumlarına mobil bir çalışma alanı ekler. Winlator 11.2 uygulama kaynakları [a030f55](https://github.com/brunodev85/winlator-app/tree/a030f552f452158a2db64fdb32b490fa19c0b48d) revizyonuna sabitlenmiştir. [VEX Win kaynak değişiklikleri](patches/vex-runtime.patch) derlemeden önce bu revizyona uygulanır.
+**Uygulama Ekle → Klasör Seç → EXE Seç → Kütüphaneye Ekle → Oyna**
 
-## APK ve cihaz testi
+Android PC-game launcher built on Winlator 11.2 (Wine/Box64) and the original VEX Win workspace. Open the Android Storage Access Framework folder picker, select a Windows game folder and its main EXE. The entire selected folder is copied into the Wine `C:\VexGames` directory, and a `.desktop` launcher is added to the game library. Selecting the game launches Winlator's existing XServerDisplayActivity/Wine execution path, not a simulated UI.
 
-[GitHub Actions](https://github.com/Geko7490/VexWinEmu/actions/workflows/android-runtime.yml) çalıştırmasındaki **VEX-Win-V0.1.2-Workspace-arm64** paketi imzalı debug APK ve SHA-256 özeti içerir. Ana ekranda container seçebilir, Windows masaüstünü açabilir, masaüstü kısayollarında arama yapabilir ve son açılanlara dönebilirsin. Oturumun alt çubuğundan Başlat, Windows dosyaları, açık pencereler ve klavyeye erişebilirsin. Sağ üstteki mor düğme dokunma, imleç ve tam ekran kontrollerini açar.
+**Limitations:** Import needs free space for a second copy of the game. Some Windows games require launchers, DRM, specific DirectX components or GPUs and may fail. Game performance, especially GTA IV on Mali GPUs, is **not verified**. Create a Winlator container before adding games. The package ID remains `com.winlator` because of upstream bundled native runtime assumptions; back up any existing installation before installing this debug APK.
 
-POCO X6 Pro’da Windows masaüstünü aç. Dosya Gezgini’nde dokunma, çift dokunma, uzun basma, pencere taşıma ve iki parmakla kaydırmayı dene. Not Defteri’nde Android klavyesinden Türkçe karakter gir. Tam ekran ve imleç modunu da dene. Kurulum hatası yaşanırsa Android logcat’te `VexWinRuntime` etiketini kontrol et.
+## APK build
 
-Wine, glibc ve grafik bileşenlerindeki sabit çalışma zamanı yolları nedeniyle bu test APK’sı `com.winlator` kimliğini kullanır. Winlator ve önceki VEX Win test APK’sı farklı imzalarla kurulmuş olabilir. Android farklı imzalı paketin üzerine güncelleme yapamaz. Mevcut kurulumunu ve container kayıtlarını korumak için temiz bir test cihazı kullan.
+Build via [GitHub Actions](https://github.com/Geko7490/VexWinEmu/actions/workflows/android-runtime.yml). Artifacts are generated only if the build succeeds. To build locally (Android SDK/NDK, JDK 17 required):
 
-## Kaynaktan derleme
+    bash scripts/prepare-runtime.sh
+    cd work/winlator
+    bash gradlew :app:assembleDebug
 
-JDK 17, Android SDK 35, Build Tools 34.0.0, NDK 24.0.8215888 ve CMake 3.22.1 ile çalıştır:
+## Source layout
 
-```bash
-bash scripts/prepare-runtime.sh
-cd work/winlator
-bash gradlew :app:assembleDebug
-```
+- `patches/vex-runtime.patch`: old workspace and touch-mode patch against pinned Winlator app revision `a030f552f452158a2db64fdb32b490fa19c0b48d`.
+- `overlay/app/src/main/java/com/winlator/VexGameImporter.java`: SAF scan, full-game folder copy, shortcut generation.
+- `scripts/install-game-library.py`: inserts V0.2 UI into patched Winlator sources.
+- `scripts/prepare-runtime.sh`: restores pinned upstream and overlays.
 
-Hazırlama komutu kaynakları `work/winlator` altında açar. [Lisans ve bileşen kaynakları](THIRD_PARTY.md)
+See [THIRD_PARTY.md](THIRD_PARTY.md) and `LICENSE` for upstream licenses and components.

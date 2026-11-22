@@ -1,17 +1,14 @@
-name: VEX Win Android Runtime
-
+name: VEX Win Game Library APK
 on:
   push:
     branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   arm64:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,7 +17,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Android toolchain
+      - name: Install Android SDK and NDK
         run: |
           sdk="$RUNNER_TEMP/vex-android-sdk"
           cli="$RUNNER_TEMP/android-cli.zip"
@@ -33,25 +30,24 @@ jobs:
           "$sdkmanager" --sdk_root="$sdk" --licenses < <(yes) > /dev/null
           "$sdkmanager" --sdk_root="$sdk" 'platforms;android-35' 'platform-tools' 'build-tools;34.0.0' 'ndk;24.0.8215888' 'cmake;3.22.1'
           printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$sdk" "$sdk" >> "$GITHUB_ENV"
-      - name: Prepare Winlator source
+      - name: Prepare source with game library
         run: bash scripts/prepare-runtime.sh
-      - name: Assemble ARM64 APK
+      - name: Build
         working-directory: work/winlator
         run: bash gradlew --no-daemon --max-workers=4 -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=768m" :app:assembleDebug
-      - name: Verify and stage APK
+      - name: Verify and publish APK artifact
         run: |
           mkdir -p dist
-          apk=dist/VEX-Win-V0.1.2-Workspace-arm64.apk
+          apk=dist/VexWinEmu-V0.2.0-arm64.apk
           cp work/winlator/app/build/outputs/apk/debug/app-debug.apk "$apk"
           build_tools="$ANDROID_HOME/build-tools/34.0.0"
           "$build_tools/apksigner" verify --verbose "$apk"
-          "$build_tools/aapt" dump badging "$apk" | grep -F "name='com.winlator' versionCode='35' versionName='0.1.2-workspace'"
+          "$build_tools/aapt" dump badging "$apk" | grep -F "name='com.winlator' versionCode='36' versionName='0.2.0-library'"
           python3 scripts/verify-apk.py "$apk"
           cp LICENSE THIRD_PARTY.md dist/
-          (cd dist && sha256sum VEX-Win-V0.1.2-Workspace-arm64.apk > SHA256SUMS)
+          (cd dist && sha256sum VexWinEmu-V0.2.0-arm64.apk > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: VEX-Win-V0.1.2-Workspace-arm64
+          name: VexWinEmu-V0.2.0-arm64
           path: dist/
-          compression-level: 0
           if-no-files-found: error
