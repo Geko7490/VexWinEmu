@@ -1,6 +1,6 @@
 package com.winlator;
 
-import android.app.AlertDialog;
+import androidx.appcompat.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.widget.Toast;
@@ -52,18 +52,39 @@ public final class VexGameImporter {
                     if (scan.exe.isEmpty()) { error(host, "Seçilen klasörde EXE bulunamadı."); return; }
                     String[] names = new String[scan.exe.size()];
                     for (int i = 0; i < names.length; i++) names[i] = scan.exe.get(i).path;
-                    new AlertDialog.Builder(host).setTitle("Ana EXE dosyasını seç")
-                        .setMessage("Tüm klasör Wine C: içine kopyalanacak (yaklaşık " + size(scan.bytes) +
-                            "). Android klasör izni Wine için doğrudan dosya yolu sağlamaz.")
-                        .setSingleChoiceItems(names, 0, (d, which) -> {
-                            d.dismiss();
-                            copy(host, container, scan, scan.exe.get(which), clean(root.getName()));
-                        }).setNegativeButton(android.R.string.cancel, null).show();
+                    showExecutablePicker(host, container, root, scan);
                 });
             } catch (Exception ex) {
                 host.runOnUiThread(() -> { dialog.dismiss(); if (!host.isFinishing()) error(host, ex.getMessage()); });
             }
         }, "vex-scan").start();
+    }
+
+    /** Keep the executable list separate from the copy explanation.
+     * Android AlertDialog cannot display a message and list simultaneously.
+     */
+    private static void showExecutablePicker(MainActivity host, Container container, DocumentFile root, Scan scan) {
+        if (host.isFinishing() || host.isDestroyed()) return;
+        String[] names = new String[scan.exe.size()];
+        for (int i = 0; i < names.length; i++) names[i] = scan.exe.get(i).path;
+        new AlertDialog.Builder(host)
+            .setTitle("Ana EXE dosyasını seç • " + size(scan.bytes))
+            .setSingleChoiceItems(names, -1, (dialog, which) -> {
+                dialog.dismiss();
+                Item chosen = scan.exe.get(which);
+                new AlertDialog.Builder(host)
+                    .setTitle("Oyunu içe aktar")
+                    .setMessage("EXE: " + chosen.path +
+                        "\\n\\nTüm klasör Wine C: diskine kopyalanacak (yaklaşık " +
+                        size(scan.bytes) + "). Telefonunda ek depolama alanı gerekir.")
+                    .setNegativeButton("Geri", (confirmation, button) ->
+                        showExecutablePicker(host, container, root, scan))
+                    .setPositiveButton("İçe Aktar", (confirmation, button) ->
+                        copy(host, container, scan, chosen, clean(root.getName())))
+                    .show();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
     }
 
     private static void walk(DocumentFile dir, String parent, int depth, Scan scan) throws IOException {
