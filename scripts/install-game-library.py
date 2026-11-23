@@ -51,10 +51,30 @@ replace_once(workspace, "        LinearLayout entryPoints = new LinearLayout(con
         LinearLayout entryPoints = new LinearLayout(context);''')
 
 build = "app/build.gradle"
-replace_once(build, "versionCode 35", "versionCode 36")
-replace_once(build, 'versionName "0.1.2-workspace"', 'versionName "0.2.0-library"')
+replace_once(build, "versionCode 35", "versionCode 37")
+replace_once(build, 'versionName "0.1.2-workspace"', 'versionName "0.2.1-pathfix"')
 replace_once(build, "    implementation 'androidx.appcompat:appcompat:1.4.0'",
              "    implementation 'androidx.appcompat:appcompat:1.4.0'\n    implementation 'androidx.documentfile:documentfile:1.0.1'")
+
+# Fix imported Winlator desktop shortcuts (including games already imported in V0.2).
+shortcut = "app/src/main/java/com/winlator/container/Shortcut.java"
+replace_once(shortcut,
+    '            index = path.indexOf("start.exe ");',
+    '''            String vexGamePath = com.winlator.VexShortcutPath.decodeExec(execArgs);
+            if (vexGamePath != null) path = vexGamePath;
+            index = path.indexOf("start.exe ");''')
+
+# Never crash while resolving malformed third-party shortcut paths.
+display = "app/src/main/java/com/winlator/XServerDisplayActivity.java"
+replace_once(display,
+    '        if (execPath != null) {\n            String execDir = FileUtils.getDirname(execPath);',
+    '''        if (execPath != null &&
+            Math.max(execPath.lastIndexOf('/'), execPath.lastIndexOf('\\\\')) < 0) {
+            android.util.Log.e("VexWinRuntime", "Ignoring malformed Windows EXE path: " + execPath);
+            execPath = null;
+        }
+        if (execPath != null) {
+            String execDir = FileUtils.getDirname(execPath);''')
 
 for p in (repo / "overlay").rglob("*"):
     if p.is_file():

@@ -1,4 +1,4 @@
-name: VEX Win Game Library APK
+name: VEX Win Game Library APK (EXE path crash fix)
 on:
   push:
     branches: [main]
@@ -30,6 +30,13 @@ jobs:
           "$sdkmanager" --sdk_root="$sdk" --licenses < <(yes) > /dev/null
           "$sdkmanager" --sdk_root="$sdk" 'platforms;android-35' 'platform-tools' 'build-tools;34.0.0' 'ndk;24.0.8215888' 'cmake;3.22.1'
           printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$sdk" "$sdk" >> "$GITHUB_ENV"
+      - name: Test EXE shortcut path decoding
+        run: |
+          mkdir -p "$RUNNER_TEMP/vex-tests"
+          javac -d "$RUNNER_TEMP/vex-tests" \
+            overlay/app/src/main/java/com/winlator/VexShortcutPath.java \
+            tests/VexShortcutPathTest.java
+          java -cp "$RUNNER_TEMP/vex-tests" VexShortcutPathTest
       - name: Prepare source with game library
         run: bash scripts/prepare-runtime.sh
       - name: Build
@@ -38,16 +45,16 @@ jobs:
       - name: Verify and publish APK artifact
         run: |
           mkdir -p dist
-          apk=dist/VexWinEmu-V0.2.0-arm64.apk
+          apk=dist/VexWinEmu-V0.2.1-PathFix-arm64.apk
           cp work/winlator/app/build/outputs/apk/debug/app-debug.apk "$apk"
           build_tools="$ANDROID_HOME/build-tools/34.0.0"
           "$build_tools/apksigner" verify --verbose "$apk"
-          "$build_tools/aapt" dump badging "$apk" | grep -F "name='com.winlator' versionCode='36' versionName='0.2.0-library'"
+          "$build_tools/aapt" dump badging "$apk" | grep -F "name='com.winlator' versionCode='37' versionName='0.2.1-pathfix'"
           python3 scripts/verify-apk.py "$apk"
           cp LICENSE THIRD_PARTY.md dist/
-          (cd dist && sha256sum VexWinEmu-V0.2.0-arm64.apk > SHA256SUMS)
+          (cd dist && sha256sum VexWinEmu-V0.2.1-PathFix-arm64.apk > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: VexWinEmu-V0.2.0-arm64
+          name: VexWinEmu-V0.2.1-PathFix-arm64
           path: dist/
           if-no-files-found: error
