@@ -1,4 +1,4 @@
-# VEX Win Emulator V0.3 — POCO X6 Pro Single Profile
+# VEX Win Emulator V0.3.1 — POCO X6 Pro Smooth (single profile)
 
 **Uygulama Ekle → Klasör Seç → EXE Seç → Kütüphaneye Ekle → Oyna**
 
@@ -21,11 +21,17 @@ This build is specifically configured for the **POCO X6 Pro (Dimensity 8300 Ultr
 | OpenGL backend | Gladio |
 | D3D9-11 | DXVK |
 | Box64 | PERFORMANCE |
-| CPU affinity | 4,5,6,7 (big-core preference; fallback unpinned if <8 logical processors) |
+| CPU affinity | All 8 logical cores (0–7); Android scheduler determines little/big core placement |
 | Shader cache | 1024 MB |
 | Wine | WINEESYNC=1; WINEDEBUG=-all |
 
 A single `POCO X6 Pro` container is created on first use, and existing containers are automatically migrated **without deleting game folders, Wine prefixes, saves, or desktop shortcuts**. Technical advanced settings remain in the Winlator menus for diagnostics, but launching/creating containers enforces the same one profile. The default Vulkan/OpenGL drivers already support Mali in upstream Winlator; this is a preset and integration update, not a replacement GPU driver or proven FPS improvement. **Actual FPS and stability require a POCO X6 Pro device test.** This build intentionally does not expose extra device profiles.
+
+## V0.3.1 frame-time stability fix
+
+V0.3.0 incorrectly pinned Wine/Box64 workloads to only CPUs 4–7. That left four cores unused within the game process and could increase contention between Wine and game threads, producing uneven frame times. V0.3.1 lets the process use **all eight cores**, with big/little placement handled by the Android scheduler. The fixed single profile is retained; the profile ID is updated so existing containers migrate on load without rewriting Wine prefixes or game files.
+
+This is a targeted scheduling fix, **not a measured FPS gain**. On the Mali-G615, Vortek/DXVK graphics translation and shader compilation may still dominate stutter. Test multiple minutes of gameplay at 960×540 before comparing FPS and temperature.
 
 ## APK build
 

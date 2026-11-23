@@ -5,7 +5,7 @@ package com.winlator;
  * Workload-dependent game FPS and thermals still require on-device testing.
  */
 public final class VexPocoProfileSpec {
-    public static final String ID = "poco-x6-pro-mali-g615-v1";
+    public static final String ID = "poco-x6-pro-mali-g615-v2-smooth";
     public static final String NAME = "POCO X6 Pro • Mali Performance";
     public static final String SCREEN = "960x540";
     public static final String GRAPHICS = "vortek,gladio";
@@ -16,10 +16,17 @@ public final class VexPocoProfileSpec {
         "mesa_glthread=true WINEESYNC=1 WINEDEBUG=-all DXVK_LOG_LEVEL=none";
     private VexPocoProfileSpec() {}
 
-    /** On POCO X6 Pro the faster A715 cores are normally 4..7.
-     * If fewer CPUs are online, leave affinity unpinned for safety. */
+    /** Allow the Android scheduler to distribute Wine, Box64 and graphics
+     * threads over ALL online cores. Previously forcing only 4 big cores
+     * could starve game/background threads and cause frame-time spikes.
+     * This is a single deterministic profile, not a preset selector. */
     public static String cpuAffinity(int cpuCount) {
-        if (cpuCount < 8) return "";
-        return "4,5,6,7";
+        if (cpuCount < 1 || cpuCount > 64) return "";
+        StringBuilder cores = new StringBuilder();
+        for (int i = 0; i < cpuCount; i++) {
+            if (i > 0) cores.append(',');
+            cores.append(i);
+        }
+        return cores.toString();
     }
 }

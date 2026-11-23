@@ -51,8 +51,8 @@ replace_once(workspace, "        LinearLayout entryPoints = new LinearLayout(con
         LinearLayout entryPoints = new LinearLayout(context);''')
 
 build = "app/build.gradle"
-replace_once(build, "versionCode 35", "versionCode 38")
-replace_once(build, 'versionName "0.1.2-workspace"', 'versionName "0.3.0-poco"')
+replace_once(build, "versionCode 35", "versionCode 39")
+replace_once(build, 'versionName "0.1.2-workspace"', 'versionName "0.3.1-poco-smooth"')
 replace_once(build, "    implementation 'androidx.appcompat:appcompat:1.4.0'",
              "    implementation 'androidx.appcompat:appcompat:1.4.0'\n    implementation 'androidx.documentfile:documentfile:1.0.1'")
 

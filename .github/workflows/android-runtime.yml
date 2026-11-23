@@ -1,4 +1,4 @@
-name: VEX Win POCO X6 Pro Single Profile
+name: VEX Win POCO X6 Pro Smooth
 on:
   push:
     branches: [main]
@@ -52,16 +52,16 @@ jobs:
       - name: Verify and publish APK artifact
         run: |
           mkdir -p dist
-          apk=dist/VexWinEmu-V0.3.0-POCO-X6-Pro-arm64.apk
+          apk=dist/VexWinEmu-V0.3.1-POCO-Smooth-arm64.apk
           cp work/winlator/app/build/outputs/apk/debug/app-debug.apk "$apk"
           build_tools="$ANDROID_HOME/build-tools/34.0.0"
           "$build_tools/apksigner" verify --verbose "$apk"
-          "$build_tools/aapt" dump badging "$apk" | grep -F "name='com.winlator' versionCode='38' versionName='0.3.0-poco'"
+          "$build_tools/aapt" dump badging "$apk" | grep -F "name='com.winlator' versionCode='39' versionName='0.3.1-poco-smooth'"
           python3 scripts/verify-apk.py "$apk"
           cp LICENSE THIRD_PARTY.md dist/
-          (cd dist && sha256sum VexWinEmu-V0.3.0-POCO-X6-Pro-arm64.apk > SHA256SUMS)
+          (cd dist && sha256sum VexWinEmu-V0.3.1-POCO-Smooth-arm64.apk > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: VexWinEmu-V0.3.0-POCO-X6-Pro-arm64
+          name: VexWinEmu-V0.3.1-POCO-Smooth-arm64
           path: dist/
           if-no-files-found: error
