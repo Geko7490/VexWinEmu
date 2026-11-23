@@ -51,8 +51,8 @@ replace_once(workspace, "        LinearLayout entryPoints = new LinearLayout(con
         LinearLayout entryPoints = new LinearLayout(context);''')
 
 build = "app/build.gradle"
-replace_once(build, "versionCode 35", "versionCode 37")
-replace_once(build, 'versionName "0.1.2-workspace"', 'versionName "0.2.1-pathfix"')
+replace_once(build, "versionCode 35", "versionCode 38")
+replace_once(build, 'versionName "0.1.2-workspace"', 'versionName "0.3.0-poco"')
 replace_once(build, "    implementation 'androidx.appcompat:appcompat:1.4.0'",
              "    implementation 'androidx.appcompat:appcompat:1.4.0'\n    implementation 'androidx.documentfile:documentfile:1.0.1'")
 
@@ -75,6 +75,71 @@ replace_once(display,
         }
         if (execPath != null) {
             String execDir = FileUtils.getDirname(execPath);''')
+
+
+# One POCO X6 Pro performance profile for all Wine containers. Applies to
+# both new and existing containers without touching game files or drive data.
+manager = "app/src/main/java/com/winlator/container/ContainerManager.java"
+replace_once(manager,
+    "                            container.loadData(data);\n                            containers.add(container);",
+    "                            container.loadData(data);\n" +
+    "                            if (com.winlator.VexPocoProfile.apply(container)) container.saveData();\n" +
+    "                            containers.add(container);")
+replace_once(manager,
+    "            container.loadData(data);\n\n            boolean isMainWineVersion",
+    "            container.loadData(data);\n" +
+    "            com.winlator.VexPocoProfile.apply(container);\n\n" +
+    "            boolean isMainWineVersion")
+replace_once(manager,
+    "        dstContainer.setDesktopTheme(srcContainer.getDesktopTheme());\n        dstContainer.saveData();",
+    "        dstContainer.setDesktopTheme(srcContainer.getDesktopTheme());\n" +
+    "        com.winlator.VexPocoProfile.apply(dstContainer);\n        dstContainer.saveData();")
+
+# Advanced container UI remains for diagnostics but the saved execution
+# profile is fixed to the same device preset.
+detail = "app/src/main/java/com/winlator/ContainerDetailFragment.java"
+replace_once(detail,
+    "                    container.setDesktopTheme(desktopTheme);\n                    container.saveData();",
+    "                    container.setDesktopTheme(desktopTheme);\n" +
+    "                    com.winlator.VexPocoProfile.apply(container);\n                    container.saveData();")
+
+# No multi-profile wizard: create the first container with fixed settings
+# automatically, so +Add Game takes the user straight to a ready launcher.
+replace_once(main,
+    "    public void createWorkspaceContainer() {\n        if (!workspaceRuntimeReady()) return;\n        showFragment(new ContainerDetailFragment());\n    }",
+    '''    public void createWorkspaceContainer() {
+        if (!workspaceRuntimeReady()) return;
+        ContainerManager manager = new ContainerManager(this);
+        Container existing = workspaceContainer(manager.getContainers());
+        if (existing != null) {
+            selectWorkspaceContainer(existing.id);
+            showFragment(new VexWorkspaceFragment());
+            return;
+        }
+        org.json.JSONObject config = new org.json.JSONObject();
+        try { config.put("name", "POCO X6 Pro"); }
+        catch (org.json.JSONException ignored) {}
+        preloaderDialog.show(R.string.creating_container);
+        manager.createContainerAsync(config, created -> {
+            preloaderDialog.close();
+            if (isFinishing() || isDestroyed()) return;
+            if (created == null) {
+                android.widget.Toast.makeText(this, "Wine container creation failed", android.widget.Toast.LENGTH_LONG).show();
+                return;
+            }
+            selectWorkspaceContainer(created.id);
+            showFragment(new VexWorkspaceFragment());
+        });
+    }''')
+
+# Device-specific profile label replaces the previously generic details.
+replace_once(workspace,
+    '        containerPicker.setVisibility(containers.size() > 1 ? View.VISIBLE : View.GONE);',
+    '        containerPicker.setVisibility(View.GONE);')
+replace_once(workspace,
+    '''        containerDetails.setText(getString(R.string.vex_workspace_meta,
+            WineInfo.fromIdentifier(requireContext(), container.getWineVersion()).toString(), container.getScreenSize()));''',
+    '''        containerDetails.setText("Tek profil • POCO X6 Pro / Mali-G615 • 960x540 • Vortek + DXVK");''')
 
 for p in (repo / "overlay").rglob("*"):
     if p.is_file():

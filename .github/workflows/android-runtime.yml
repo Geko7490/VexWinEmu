@@ -1,4 +1,4 @@
-name: VEX Win Game Library APK (EXE path crash fix)
+name: VEX Win POCO X6 Pro Single Profile
 on:
   push:
     branches: [main]
@@ -37,6 +37,13 @@ jobs:
             overlay/app/src/main/java/com/winlator/VexShortcutPath.java \
             tests/VexShortcutPathTest.java
           java -cp "$RUNNER_TEMP/vex-tests" VexShortcutPathTest
+      - name: Test device-only POCO profile
+        run: |
+          mkdir -p "$RUNNER_TEMP/poco-tests"
+          javac -d "$RUNNER_TEMP/poco-tests" \
+            overlay/app/src/main/java/com/winlator/VexPocoProfileSpec.java \
+            tests/VexPocoProfileSpecTest.java
+          java -cp "$RUNNER_TEMP/poco-tests" VexPocoProfileSpecTest
       - name: Prepare source with game library
         run: bash scripts/prepare-runtime.sh
       - name: Build
@@ -45,16 +52,16 @@ jobs:
       - name: Verify and publish APK artifact
         run: |
           mkdir -p dist
-          apk=dist/VexWinEmu-V0.2.1-PathFix-arm64.apk
+          apk=dist/VexWinEmu-V0.3.0-POCO-X6-Pro-arm64.apk
           cp work/winlator/app/build/outputs/apk/debug/app-debug.apk "$apk"
           build_tools="$ANDROID_HOME/build-tools/34.0.0"
           "$build_tools/apksigner" verify --verbose "$apk"
-          "$build_tools/aapt" dump badging "$apk" | grep -F "name='com.winlator' versionCode='37' versionName='0.2.1-pathfix'"
+          "$build_tools/aapt" dump badging "$apk" | grep -F "name='com.winlator' versionCode='38' versionName='0.3.0-poco'"
           python3 scripts/verify-apk.py "$apk"
           cp LICENSE THIRD_PARTY.md dist/
-          (cd dist && sha256sum VexWinEmu-V0.2.1-PathFix-arm64.apk > SHA256SUMS)
+          (cd dist && sha256sum VexWinEmu-V0.3.0-POCO-X6-Pro-arm64.apk > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: VexWinEmu-V0.2.1-PathFix-arm64
+          name: VexWinEmu-V0.3.0-POCO-X6-Pro-arm64
           path: dist/
           if-no-files-found: error

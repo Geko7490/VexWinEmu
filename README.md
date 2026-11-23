@@ -1,4 +1,4 @@
-# VEX Win Emulator V0.2.1 — Game Library
+# VEX Win Emulator V0.3 — POCO X6 Pro Single Profile
 
 **Uygulama Ekle → Klasör Seç → EXE Seç → Kütüphaneye Ekle → Oyna**
 
@@ -9,6 +9,23 @@ Android PC-game launcher built on Winlator 11.2 (Wine/Box64) and the original VE
 ## V0.2.1 crash fix
 
 Previous V0.2 builds incorrectly stripped `\\` characters from game shortcut paths via Winlator's desktop Exec decoder, so launching a game could crash with `StringIndexOutOfBoundsException` in `FileUtils.getDirname`. V0.2.1 supplies a dedicated, tested decoder for VEX shortcuts, including shortcuts created by older versions; **do not re-import your game** after updating. Invalid paths are rejected at launch rather than crashing the UI.
+
+## POCO X6 Pro-only profile
+
+This build is specifically configured for the **POCO X6 Pro (Dimensity 8300 Ultra, Mali-G615 MC6, 12 GB RAM)**. It uses one fixed performance profile for every container (not a collection of device presets):
+
+| Setting | Value |
+|---|---|
+| Game resolution | 960 × 540 |
+| Vulkan backend | Vortek |
+| OpenGL backend | Gladio |
+| D3D9-11 | DXVK |
+| Box64 | PERFORMANCE |
+| CPU affinity | 4,5,6,7 (big-core preference; fallback unpinned if <8 logical processors) |
+| Shader cache | 1024 MB |
+| Wine | WINEESYNC=1; WINEDEBUG=-all |
+
+A single `POCO X6 Pro` container is created on first use, and existing containers are automatically migrated **without deleting game folders, Wine prefixes, saves, or desktop shortcuts**. Technical advanced settings remain in the Winlator menus for diagnostics, but launching/creating containers enforces the same one profile. The default Vulkan/OpenGL drivers already support Mali in upstream Winlator; this is a preset and integration update, not a replacement GPU driver or proven FPS improvement. **Actual FPS and stability require a POCO X6 Pro device test.** This build intentionally does not expose extra device profiles.
 
 ## APK build
 
